@@ -1,0 +1,2280 @@
+---
+title: "Heart Disease classification"
+author: "Barzan Giorgia, Olivato Matteo"
+date: "29-05-2023"
+output: pdf_document
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+This project focuses on a binary classification problem concerning heart
+diseases. According to the Centers for Disease Control and Prevention (CDC)'s 2020 annual survey, heart disease ranks
+among the leading causes of death across various racial groups in the
+US, including African Americans, American Indians, Alaska Natives,
+and white individuals. Approximately 47% of Americans possess at least
+one of three primary risk factors for heart disease: high blood
+pressure, high cholesterol levels, and smoking. Other significant
+indicators include diabetes, obesity (measured by a high BMI), lack of
+physical activity, and excessive alcohol consumption. Detecting and
+preventing these influential factors is of utmost importance in
+healthcare. The purpose of this project is to develop a prediction on
+the causes related to the presence or absence of heart diseases.
+
+### Libraries
+
+The followings are the libraries that has been used in this project.
+
+```{r, eval=TRUE, message=FALSE}
+library(tidyverse)
+library(corrplot)
+library(ppcor)
+library(ggplot2)
+library(gridExtra)
+library(caret)
+library(pROC)
+library(tidymodels)
+library(glmnet)
+library(car)
+library(class)
+library(MASS)
+library(dplyr)
+```
+
+## Uploading data
+
+
+This dataset is part of the Behavioral Risk Factor Surveillance System (BRFSS) dataset, collected by the CDC, and contains health-related data from a telephone survey conducted in 2020 in the United States. It includes information on risk behaviors and chronic health conditions. This dataset consists in 319795 observations and 18 variables. With the following function we upload the dataset and look at the first
+observations.
+
+```{r, eval=TRUE}
+# We now upload the file with the function read.csv and look at the first 
+# observations for each variable
+dati=read.csv("heart_2020_cleaned.csv")
+head(dati)
+```
+
+Here is a brief description of each variable:
+
+```{r, results='asis', echo=FALSE}
+library(knitr)
+
+# Creazione dei dati per la tabella
+Variable <- c("HeartDisease","BMI","Smoking", "AlcoholDrinking",  "Stroke",  "PhysicalHealth", "MentalHealth",    
+ "DiffWalking","Sex","AgeCategory","Race", "Diabetic","PhysicalActivity", "GenHealth","SleepTime" ,"Asthma",  "KidneyDisease","SkinCancer" )
+Description <- c("Has or not a heart disease","Body mass index","Has smoked at least 100 cigarettes in their life", "Heavy drinker",  "Has had a stroke",  "For how many days in the past 30 days the physical health was not good", "For how many days in the past 30 days the mental health was not good",    
+ "Has serious difficulty walking or climbing stairs","Male or female","To which age category they belong","Imputed race/ethnicity value", "Has diabetes","Exercise in the past 30 days", "General health condition","Hours they sleep on average" ,"Has asthma",  "Has a kidney disease","Has skin cancer")
+
+dati_tabella <- data.frame(Variable, Description)
+
+# Creazione della tabella
+kable(dati_tabella)
+```
+
+# Data pre-processing
+
+Before delving into the analysis of this dataset, it is essential to examine its structure. To preprocess the data, we start by checking for missing values. Specifically, we use the following command to calculate the total count of NA values for each variable.
+
+```{r, eval=TRUE}
+# look for NAs
+sapply(dati, function(x) sum(is.na(x)))
+```
+
+As the sum of missing values is zero for each variable, we can proceed with the analysis. We now examine the characteristics of each variable:
+
+```{r, eval=TRUE}
+str(dati)
+```
+
+As we can see from these results, there are many variables of the type
+'char', we therefore need to change their nature in order to use the
+variables for our analysis. In particular, we convert the char variables
+into numeric ones, assigning to each char type a number.
+
+```{r, eval=TRUE}
+# we convert the response variable from "Yes" and "No" to 1 and 0 and do the
+# same for the other binary variables
+dati$HeartDisease <- ifelse(dati$HeartDisease == "Yes", 1, 0) 
+dati$Smoking <- ifelse(dati$Smoking == "Yes", 1, 0) 
+dati$AlcoholDrinking <- ifelse(dati$AlcoholDrinking == "Yes", 1, 0) 
+dati$Stroke <- ifelse(dati$Stroke == "Yes", 1, 0) 
+dati$DiffWalking <- ifelse(dati$DiffWalking == "Yes", 1, 0) 
+dati$Diabetic <- ifelse(dati$Diabetic == "Yes", 1, 0) 
+dati$PhysicalActivity <- ifelse(dati$PhysicalActivity == "Yes", 1, 0) 
+dati$Asthma <- ifelse(dati$Asthma == "Yes", 1, 0) 
+dati$KidneyDisease <- ifelse(dati$KidneyDisease == "Yes", 1, 0) 
+dati$SkinCancer <- ifelse(dati$SkinCancer == "Yes", 1, 0) 
+# here we assign "1" to "Male" and "0" to "Female"
+dati$Sex <- ifelse(dati$Sex == "Male", 1, 0) 
+
+conv <- c("18-24" = 1, "25-29" = 2, "30-34" = 3, "35-39" = 4, "40-44" = 5,
+          "45-49" = 6, "50-54" = 7, "55-59" = 8, "60-64" = 9,
+          "65-69" = 10, "70-74" = 11, "75-79" = 12, "80 or older" = 13)
+
+# transfrom the char variable into a numeric var
+dati$AgeCategory <- ifelse(dati$AgeCategory %in% names(conv), conv[dati$AgeCategory], NA)
+
+conv2=c("White" = 1,  "Black" = 2,  "Asian" = 3, "American Indian/Alaskan Native" = 4, 
+        "Other" = 5, "Hispanic" = 6)
+dati$Race <- ifelse(dati$Race %in% names(conv2), conv2[dati$Race], NA)
+
+conv3 <- c("Very good" = 1, "Fair" = 2, "Good" = 3, "Poor" = 4, "Excellent" = 5)
+dati$GenHealth <- ifelse(dati$GenHealth %in% names(conv3), conv3[dati$GenHealth], NA)
+```
+
+We can now attach the dataset using the following function:
+
+```{r, eval=TRUE}
+attach(dati)
+```
+
+An imbalanced dataset, where the number of observations in one class differs significantly from the other, can yield unreliable results during model training. Therefore, we examine the distribution of the response variable *HeartDisease*. It is evident that the dataset is highly imbalanced, with 91.44% of the observations indicating the absence of heart disease. Later in the analysis, we will consider both the unbalanced and balanced datasets to explore potential improvements through modified data.
+
+```{r}
+table(HeartDisease)/nrow(dati) *100
+```
+
+## Training and Test split
+
+To train our models and evaluate their performance, we need to split the imbalanced dataset into training and test sets. We will allocate 75% of the data for training and reserve 25% for testing purposes.
+
+```{r, eval=TRUE}
+# set a random seed to get always the same results 
+set.seed(123)
+
+# divide the unbalanced dataset  in 75% train and 25% test
+index <- sample(1:nrow(dati), size = round(0.75*nrow(dati)), replace = FALSE)
+dati_train <- dati[index, ]
+dati_test <- dati[-index, ]
+```
+
+## Outliers
+
+After dividing our data sets into train and test sets, we need to check
+for the presence of outliers. We decided to report in particular the boxplots of the independent variables
+*BMI* and *SleepTime*, which happen to have a lot of outliers. Despite
+identifying outliers in these two variables, we have made the decision
+not to remove them. In the case of the BMI variable, an exceptionally
+high value indicates severe obesity, while extremely low or high values
+in SleepTime can be characteristic of a chronically ill individual. It
+is important to retain these outliers because they hold valuable
+information for predicting whether a person has a heart disease.
+Outliers can provide insights into extreme cases or rare scenarios that
+are crucial for accurately predicting the presence of heart disease. By
+excluding them, we risk losing important data points that could impact
+the model's performance. Furthermore, they can help improve the
+robustness and generalizability of the predictive model, allowing it to
+handle a wider range of scenarios and variations in the data.
+
+```{r, eval=TRUE}
+par(mfrow=c(1,2))
+boxplot(dati_train$BMI, main="BMI")
+boxplot(dati_train$SleepTime, main="SleepTime")
+```
+
+# Exploratory Analysis
+
+## Correlations
+
+We begin the exploratory analysis by looking at the correlations on the
+training dataset. To do so, we first compute the correlation matrix and
+then use the function *corrplot* from the library *corrplot* to
+visualize the correlations. In the graph below, the correlations between
+variables are represented by the numbers in each cell.
+
+```{r, eval=TRUE, message=FALSE}
+# correlation matrix on unbalanced dataset
+library(corrplot)
+corr_matrix <- cor(dati_train)
+corrplot(corr_matrix, method = "number", diag = FALSE, number.cex = 0.4, tl.cex = 0.5,
+         type = "upper", tl.col = "black")
+```
+
+By analyzing this graph, we can identify the variables that exhibit the highest correlation with our response variable. These variables are summarized in the following table:
+
+```{r, results='asis', echo=FALSE}
+library(knitr)
+
+# Creazione dei dati per la tabella
+Variable <- c("Smoking", "Stroke", "PhysicalHealth", "DiffWalking", "AgeCategory",
+                    "Diabetic", "PhysicalActivity", "KidneyDisease")
+Correlation_with_HeartDisease <- c(0.11, 0.20, 0.17, 0.20, 0.23, 0.18, -0.10, 0.14)
+
+dati_tabella <- data.frame(Variable, Correlation_with_HeartDisease)
+
+# Creazione della tabella
+kable(dati_tabella)
+```
+
+
+The most significant correlations can be summarized in the following
+table. The highest correlation is 0.43, while the remaining correlations range slightly above or below 0.20. These moderate correlations indicate a lower risk of collinearity, which will be further assessed during the model selection process.
+
+```{r, results='asis', echo=FALSE}
+library(knitr)
+
+# Creazione dei dati per la tabella
+Variable1 <- c("BMI", "BMI","BMI","Stroke", "PhysicalHealth", "PhysicalHealth","PhysicalHealth",
+              "PhysicalHealth", "MentalHealth", "DiffWalking", "DiffWalking","DiffWalking",
+              "AgeCategory","AgeCategory","AgeCategory","Diabetic")
+Variable2 <- c("Diabetic", "DiffWalking", "PhysicalActivity", "DiffWalking", "MentalHealth", "DiffWalking","Diabetic",
+               "PhysicalActivity","AgeCategory","AgeCategory","Diabetic", "PhysicalActivity","Race", "Diabetic",
+               "SkinCancer","KidneyDisease")
+Correlations <- c(0.20, 0.18, -0.15,0.17,0.29,0.43,0.16,-0.23,-0.16,0.24,0.22,-0.28,-0.20,0.21,0.26,0.16)
+
+dati_tabella <- data.frame(Variable1, Variable2, Correlations)
+
+# Creazione della tabella
+kable(dati_tabella)
+```
+
+The preceding plot reveals the correlations among variables, taking into account their mutual influence. However, to mitigate this issue, we utilize the *correlation* library and its corresponding function to calculate the partial correlations between variables. Additionally, we employ the *pcor* function from the *ppcor* library to visualize these partial correlations in a similar plot. Due to the large size of the *correlation* output, we will not display it here.
+
+```{r, eval=FALSE}         
+# partial correlations
+library(correlation)
+#correlation(dati_train, partial=TRUE)
+```
+
+Based on the obtained partial correlations, we observe that the variables most strongly correlated with the response variable, when accounting for the influence of other variables, are *Stroke* and *AgeCategory*.
+
+```{r, eval=TRUE}
+library(ppcor)
+part_cor <- pcor(dati_train)$estimate
+corrplot(part_cor, method = "number", diag = FALSE, number.cex = 0.4, tl.cex = 0.5,
+         type = "upper", tl.col = "black")
+```
+
+The most significant partial correlations can be summarized in the following
+table:
+
+```{r, results='asis', echo=FALSE}
+library(knitr)
+
+# Creazione dei dati per la tabella
+Variable1 <- c("PhysicalHealth", "PhysicalHealth","MentalHealth", "DiffWalking", "DiffWalking",
+              "AgeCategory","AgeCategory","AgeCategory")
+Variable2 <- c("MentalHealth", "DiffWalking","AgeCategory","AgeCategory","PhysicalActivity","Race", "Diabetic",
+               "SkinCancer")
+Correlations <- c(0.23, 0.31, -0.20,0.16,-0.15,-0.18,0.15,0.22)
+
+dati_tabella <- data.frame(Variable1, Variable2, Correlations)
+
+# Creazione della tabella
+kable(dati_tabella)
+```
+
+
+### Plots
+
+We will now delve deeper into the behavior of the most correlated independent variables concerning the response variable *HeartDisease*. Through the following plots, we can observe the distributions of each variable in relation to the values of the response variable. Notably, individuals who have smoked at least 100 cigarettes in their lifetime are more likely to have a heart disease compared to those who have not. Regarding stroke, although it affects a small portion of the population, almost all individuals with a stroke also have a heart disease. While the majority of people who experience poor physical health are at risk, even those who have had a month of good physical health can still develop the disease. Regarding difficulty in walking, a significant number of individuals with this issue have a heart disease, but there are still instances of the disease among those without this difficulty. As the age increases, the proportion of individuals with a heart disease also grows. Although most individuals with diabetes have a heart disease, a considerable portion of non-diabetic individuals can still be affected. Among those who do not engage in physical activity, there is a higher presence of heart disease, but even those who engage in physical activity can still fall ill. While the majority of the population does not have kidney disease, among those who do, almost all of them also have a heart disease.
+
+```{r, eval=TRUE, fig.width=8, fig.height=6}
+library(gridExtra)
+library(ggplot2)
+
+dati_train$HeartDisease <- as.factor(dati_train$HeartDisease)
+# ggplot of the variables
+a<-ggplot(dati_train, aes(x=Smoking, fill=HeartDisease))+
+  geom_bar(aes(y=after_stat(prop)), position="dodge")+
+  ggtitle("Smoking")+
+  xlab("Smoking")+
+  scale_fill_manual(values = c("lightblue", "violet"), labels = c("No", "Yes"))
+
+b<-ggplot(dati_train, aes(x=Stroke, fill=HeartDisease))+
+  geom_bar(aes(y=after_stat(prop)), position="dodge")+
+  ggtitle("Stroke")+
+  xlab("Stroke")+
+  scale_fill_manual(values = c("lightblue", "violet"), labels = c("No", "Yes"))
+
+c<-ggplot(dati_train, aes(x=PhysicalHealth, fill=HeartDisease))+
+  geom_bar(aes(y=after_stat(prop)), position="dodge")+
+  ggtitle("PhysicalHealth")+
+  xlab("PhysicalHealth")+
+  scale_fill_manual(values = c("lightblue", "violet"), labels = c("No", "Yes"))
+
+d<-ggplot(dati_train, aes(x=DiffWalking, fill=HeartDisease))+
+  geom_bar(aes(y=after_stat(prop)), position="dodge")+
+  ggtitle("DiffWalking")+
+  xlab("DiffWalking")+
+  scale_fill_manual(values = c("lightblue", "violet"), labels = c("No", "Yes"))
+
+e<-ggplot(dati_train, aes(x=AgeCategory, fill=HeartDisease))+
+  geom_bar(aes(y=after_stat(prop)), position="dodge")+
+  ggtitle("AgeCategory")+
+  xlab("AgeCategory")+
+  scale_fill_manual(values = c("lightblue", "violet"), labels = c("No", "Yes"))
+
+f<-ggplot(dati_train, aes(x=Diabetic, fill=HeartDisease))+
+  geom_bar(aes(y=after_stat(prop)), position="dodge")+
+  ggtitle("Diabetic")+
+  xlab("Diabetic")+
+  scale_fill_manual(values = c("lightblue", "violet"), labels = c("No", "Yes"))
+
+g<-ggplot(dati_train, aes(x=PhysicalActivity, fill=HeartDisease))+
+  geom_bar(aes(y=after_stat(prop)), position="dodge")+
+  ggtitle("PhysicalActivity")+
+  xlab("PhysicalActivity")+
+  scale_fill_manual(values = c("lightblue", "violet"), labels = c("No", "Yes"))
+
+h<-ggplot(dati_train, aes(x=KidneyDisease, fill=HeartDisease))+
+  geom_bar(aes(y=after_stat(prop)), position="dodge")+
+  ggtitle("KidneyDisease")+
+  xlab("KidneyDisease")+
+  scale_fill_manual(values = c("lightblue", "violet"), labels = c("No", "Yes"))
+
+grid.arrange(a,b,c,d,e,f,g,h, nrow = 4, ncol = 2) 
+```
+
+## Data balancing
+
+As we saw before, the dataset is very unbalanced, meaning that one class
+has a significantly larger number of instances compared to the other. To
+address this issue, we explored different techniques such as
+downsampling and oversampling. Downsampling involves reducing the size
+of the majority class by randomly selecting a subset of instances to
+match the number of instances in the minority class. On the other hand,
+oversampling involves increasing the size of the minority class by
+replicating or synthesizing new instances. After experimenting with both
+downsampling and oversampling approaches, we found that downsampling
+resulted in similar performance compared to oversampling. Therefore, we
+decided to proceed with the most efficient one, downsampling. By using the *downSample* formula
+from the *caret* library, we downscaled the training dataset, achieving
+a perfect balance between the *HeartDisease* classes. This approach
+allowed us to mitigate the impact of class imbalance and obtain reliable
+results for further analysis.
+
+```{r, eval=TRUE, message=FALSE}
+# balance the dataset 
+library(caret)
+set.seed(123)
+dati_balanced_train <- downSample(x = dati_train[,-1], y = as.factor(dati_train$HeartDisease))
+
+# we rename the response variable and put it as first variable
+names(dati_balanced_train)[names(dati_balanced_train) == "Class"] <- "HeartDisease"
+table(dati_balanced_train$HeartDisease)/nrow(dati_balanced_train) *100
+dati_balanced_train=cbind(dati_balanced_train$HeartDisease, dati_balanced_train[,-18])
+names(dati_balanced_train)[names(dati_balanced_train) == "dati_balanced_train$HeartDisease"]<-"HeartDisease"
+dati_balanced_train$HeartDisease <- ifelse(dati_balanced_train$HeartDisease == "1", 0, 1)
+```
+
+# Model selection
+
+In this section we will propose some modelling techniques and then
+compare their results. We will do this for the unbalanced and balanced
+datasets, in order to compare the performances.
+
+## Logistic Model
+
+As a first modelling technique we propose the logistic regression.
+Logistic regression, specifically the binomial generalized linear model
+(GLM), is a widely used technique for analyzing binary response
+variables. In our analysis, the binary response variable *HeartDisease*,
+indicates whether a person has heart disease or not. The logistic
+regression model estimates the probability of heart disease based on
+predictor variables, using the logistic function. 
+We begin by modeling the complete model that includes all the predictor
+variables. We then employ the stepwise technique, which combines both
+backward and forward selection, to refine the model.
+Stepwise selection is a variable selection method used to identify a
+subset of predictor variables that are most relevant to the outcome. It
+iteratively adds or removes variables based on their statistical
+significance and contribution to the model's performance.
+Backward selection begins with the full model and successively deletes
+variables that have the least impact on the model's fit. It repeatedly
+removes the least significant variable until.
+Forward selection, on the other hand, incrementally adds variables based
+on their individual significance. At each step, it selects the variable
+that contributes the most to the model's fit.
+By combining backward and forward selection in the stepwise technique,
+we aim to identify the most influential predictor variables and the most
+significant interactions, while maintaining a parsimonious model. This
+iterative process helps us refine the model, ensuring that it includes
+only the most relevant variables for predicting the outcome variable,
+thus enhancing its interpretability and predictive accuracy.
+After initializing the complete model that includes every variable, we
+check for the presence of collinearity by using the *VIF* function,
+which calculates the *Variance Inflation Function* of the independent
+variables. Collinearity occurs when independent variables in a
+regression model are highly correlated, making it difficult to determine
+their individual effects on the dependent variable. This can constitute
+a problem because it makes it difficult to determine the individual
+effects of these variables on the dependent variable, hence addressing
+it improves the model's accuracy and reliability.
+
+### Unbalanced dataset
+
+Initially, we construct the complete model using the unbalanced dataset. By reviewing the summary, it is evident that the independent variables *Race* and *GenHealth* are not statistically significant. Hence, they will later be eliminated during the stepwise selection process. The *VIF* output reveals that the values are approximately 1, indicating the absence of collinearity among the variables.
+
+```{r, eval=TRUE}
+# Complete model definition and summary
+
+glm1u <- glm(HeartDisease ~ ., data = dati_train, family = binomial(link = "logit"))
+summary(glm1u)
+
+# VIF of the complete model
+library(car)
+vif(glm1u)
+```
+
+### Stepwise selection
+
+We can now proceed with the stepwise selection. To avoid excessive
+length, the complete stepwise selection process, as in the addition and
+removal of non-significant interactions, was not included. Variables
+were added or removed based on statistical criteria such as p-values or
+information criteria ( *AIC* ), which help evaluate their significance.
+The process begins with the first modification of the complete model,
+glm2u, where the variables *Race* and *GenHealth* are removed from
+glm1u. The following addition of interactions
+derive from the partial correlation analysis, where we identified the
+most statistically significant ones. Moving to glm3u, we see the addition of
+interaction of *BMI* with *Diabetic* and *AlcoholDrinking*. In glm4u,
+two more interaction terms are introduced: *Smoking* \* *KidneyDisease*
+and *Smoking* \* *AgeCategory*. The subsequent steps, glm5u to glm11u,
+continue this process of adding or removing variables and interactions.
+Interaction terms related to variables such as *Stroke*, *DiffWalking*,
+*PhysicalHealth*, *MentalHealth*, *Sex*, *AgeCategory*, *Diabetic*,
+*Asthma*, *Smoking*, *PhysicalActivity*, and *KidneyDisease* are
+included. In glm11u, *Smoking* \* *Stroke*, *AgeCategory* \*
+*PhysicalActivity* and *AgeCategory* \* *KidneyDisease* are removed.
+This operation has been done because these interactions do not have a
+very high significance. We then selected glm10u as the best model based
+on the lower *AIC* value, as it can be shown below.
+
+```{r, eval=TRUE}
+glm2u <- update(glm1u, . ~ .- Race - GenHealth)
+
+glm3u <- update(glm2u, . ~ . + BMI * Diabetic + BMI * AlcoholDrinking)
+
+glm4u <- update(glm3u, . ~ . + Smoking * KidneyDisease +  Smoking * AgeCategory)
+
+glm5u <- update(glm4u, . ~ . + Stroke * DiffWalking + Stroke * AgeCategory + 
+                  Stroke * Smoking)
+
+glm6u <- update(glm5u, . ~ . + PhysicalHealth * DiffWalking + 
+                  PhysicalHealth * MentalHealth +PhysicalHealth * AgeCategory 
+                + PhysicalHealth * Diabetic)
+
+glm7u <- update(glm6u, . ~ . + MentalHealth * Sex)
+
+glm8u <- update(glm7u, . ~ . + DiffWalking * AgeCategory + DiffWalking * Sex)
+
+glm9u <- update(glm8u, . ~ . + Sex * AgeCategory)
+
+glm10u <- update(glm9u, . ~ . + AgeCategory * Diabetic +
+                   AgeCategory * Asthma  + AgeCategory * Smoking + 
+                   AgeCategory * PhysicalActivity + AgeCategory * KidneyDisease)
+
+glm11u <- update(glm10u, . ~ . - Smoking:Stroke - AgeCategory:PhysicalActivity - 
+                   AgeCategory:KidneyDisease)
+```
+
+```{r, eval=TRUE}
+# compare the models with the AIC
+AIC(glm1u, glm2u, glm3u, glm4u, glm5u, glm6u, glm7u, glm8u, glm9u, glm10u, glm11u)
+```
+```{r, eval=TRUE}
+summary(glm10u)
+```
+
+After selecting the best model we proceed on the analysis with the model
+validation. In this section we implement a prediction on the test set,
+using first the best model and then the complete model, then check for
+the best threshold by looking at three options: 0.4, 0.5 and 0.6. The
+selection of the best threshold is based on the proportion of
+observations assigned to class 1 that is closer to the actual proportion
+of the class, which in this case is 1%, as well as the one that brings better values in the metrics. We then compute the confusion
+matrix and extrapolate the true positive rate, the true negative rate,
+precision and recall in order to compute the F1 score. The F1 score is a
+metric used to evaluate the performance of a model. It combines
+precision and recall into a single value, providing a measure of the
+model's accuracy in identifying positive samples correctly. Precision
+represents the proportion of correctly predicted positive samples out of
+all samples predicted as positive, while recall measures the proportion
+of correctly predicted positive samples out of all actual positive
+samples. The F1 score combines these two metrics to provide a balanced
+evaluation of the model's ability to correctly identify positive samples
+while minimizing false positives and false negatives. It is no surprise,
+as the dataset is very unbalanced on the negative class, that the value
+of TPR is very low and TNR is almost equal to 1, as well as an average
+value for precision and a low one for recall, which result in the F1
+score very close to zero. We will see later how this situation changes
+with the balanced dataset.
+
+```{r, eval=TRUE}
+### MODEL VALIDATION 
+
+pred_u <- predict(glm10u, dati_test[,-1], type = "response")
+
+# threshold = 0.4
+pred_u_4 <- ifelse(pred_u >= 0.4, 1, 0)
+mean(pred_u_4) 
+
+# threshold = 0.5
+pred_u_5 <- ifelse(pred_u >= 0.5, 1, 0)
+mean(pred_u_5) 
+
+# threshold = 0.6
+pred_u_6 <- ifelse(pred_u >= 0.6, 1, 0)
+mean(pred_u_6) 
+
+# the best threshold is 0.5
+```
+
+```{r, eval=TRUE}
+# Confusion matrix
+conf_mat <- table(dati_test$HeartDisease, pred_u_5)
+conf_mat
+```
+
+```{r, eval=TRUE}
+# true positive rate
+TPR <- conf_mat[2, 2]/sum(conf_mat[2, ])
+TPR 
+
+# true negative rate
+TNR <- conf_mat[1, 1]/sum(conf_mat[1, ])
+TNR 
+
+# precision
+PREC <- conf_mat[2, 2]/sum(conf_mat[, 2])
+PREC 
+
+# recall
+REC <- conf_mat[2, 2]/sum(conf_mat[2, ])
+REC 
+
+# F1 score
+F1_glmu <- 2 * (PREC * REC)/(PREC + REC)
+F1_glmu 
+```
+
+We now compute the validation of the model without interactions. The
+results are very similar to the best model selected, but with a lower F1
+score.
+
+```{r, eval=TRUE}
+# we look now at the complete model
+pred_uc <- predict(glm1u, dati_test[,-1], type = "response")
+
+# threshold = 0.4
+pred_uc_4 <- ifelse(pred_uc >= 0.4, 1, 0)
+mean(pred_uc_4) 
+
+# threshold = 0.5
+pred_uc_5 <- ifelse(pred_uc >= 0.5, 1, 0)
+mean(pred_uc_5) 
+
+# threshold = 0.6
+pred_uc_6 <- ifelse(pred_uc >= 0.6, 1, 0)
+mean(pred_uc_6) 
+
+# the best threshold is 0.6
+```
+
+```{r, eval=TRUE}
+# Confusion matrix
+conf_mat <- table(dati_test$HeartDisease, pred_uc_6)
+conf_mat
+```
+
+```{r, eval=TRUE}
+# true positive rate
+TPR <- conf_mat[2, 2]/sum(conf_mat[2, ])
+TPR
+
+# true negative rate
+TNR <- conf_mat[1, 1]/sum(conf_mat[1, ])
+TNR 
+
+# precision
+PREC <- conf_mat[2, 2]/sum(conf_mat[, 2])
+PREC 
+
+# recall
+REC <- conf_mat[2, 2]/sum(conf_mat[2, ])
+REC 
+
+# F1 score
+F1 <- 2 * (PREC * REC)/(PREC + REC)
+F1 
+```
+
+We now explore the ROC curve of the prediction of the *glm10u* and
+*glm1u* models. The ROC curve and AUC summarize the performance of the
+model in predicting positive and negative instances. The ROC curve plots
+the true positive rate against the false positive rate, providing a
+visual representation of the model's discrimination ability. The AUC is
+a single metric that quantifies the overall performance of the model
+based on the ROC curve. It helps evaluate and compare the predictive
+accuracy of different models. Since the first model has a slightly lower F1 score than
+the *glm10u* model and lower AIC as well as lower AUC, we decide to
+stick with the *glm10u* model, as it indicates a better trade-off
+between the model's goodness-of-fit and its complexity.
+
+```{r, eval=TRUE, message=FALSE}
+# ROC curve
+library(pROC)
+par(mfrow=c(1,2))
+roc_u <- roc(dati_test$HeartDisease, pred_u)
+auc_u <- auc(roc_u)
+plot(roc_u, main = "ROC curve glm10u", print.auc = TRUE, auc.polygon = TRUE, 
+     max.auc.polygon = TRUE, grid = TRUE, legacy.axes = TRUE, 
+     xlab = "False positive rate", ylab = "True positive rate")
+coords <- coords(roc_u, "best", best.method = "closest.topleft")
+opt_thr <- coords$threshold 
+abline(v = opt_thr, col = "red", lty = 2)
+
+roc_uc <- roc(dati_test$HeartDisease, pred_uc)
+auc_uc <- auc(roc_uc)
+plot(roc_uc, main = "ROC curve glm1u", print.auc = TRUE, auc.polygon = TRUE, 
+     max.auc.polygon = TRUE, grid = TRUE, legacy.axes = TRUE, 
+     xlab = "False positive rate", ylab = "True positive rate")
+coords <- coords(roc_uc, "best", best.method = "closest.topleft")
+opt_thr <- coords$threshold 
+abline(v = opt_thr, col = "red", lty = 2)
+
+```
+
+### Balanced dataset
+
+Next, we examine the glm models using the balanced dataset and establish the complete model. By reviewing the summary, it is evident that the independent variable *Race* is not statistically significant. Consequently, it will be eliminated during the stepwise selection process. The *VIF* output indicates that all the values are close to 1, suggesting the absence of collinearity among the variables.
+
+```{r, eval=TRUE}
+# Complete model definition and summary
+
+glm1 <- glm(HeartDisease ~ ., data = dati_balanced_train, family = binomial(link = "logit"))
+summary(glm1)
+```
+
+```{r, eval=TRUE}
+# VIF of the complete model
+library(car)
+vif(glm1)
+```
+
+### Stepwise selection
+
+The following step involves the stepwise selection. To avoid excessive
+length, the complete stepwise selection process, as in the addition and
+removal of non-significant interactions, was not included. Variables
+were added or removed based on statistical criteria such as p-values or
+information criteria ( *AIC* ), which help evaluate their significance.
+In the initial model, the variable *Race* was included, but since it did
+not contribute significantly to the model's predictive power, it was
+removed. To enhance the model's performance, several variables and their
+interactions were added. These included *BMI* with *DiffWalking* and
+*GenHealth*. Further improvements were made by incorporating additional
+interactions such as *Smoking* with *AgeCategory* and *GenHealth*. Other
+interactions of the following variables were considered: *Stroke* ,
+*PhysicalHealth*, *AgeCategory*, *DiffWalking*, *MentalHealth*,*Sex*,
+*GenHealth*,*SleepTime* and *Asthma*. In glm11, *AgeCategory* \* *Asthma*, *PhysicalHealth* \*
+*AgeCategory* and *MentalHealth* \* *Sex* are removed.
+This operation has been done because these interactions do not have a
+very high significance.
+We then compared the AIC values of
+each model and selected the best one, which was the glm10 model.
+
+```{r, eval=TRUE}
+glm2 <- update(glm1, . ~ . - Race)
+
+glm3 <- update(glm2, . ~ . + BMI * DiffWalking + BMI * GenHealth)
+
+glm4 <- update(glm3, . ~ . + Smoking * AgeCategory + Smoking * GenHealth)
+
+glm5 <- update(glm4, . ~ . + Stroke * PhysicalHealth + Stroke * AgeCategory +
+                 Stroke * GenHealth + Stroke * PhysicalHealth + Stroke * DiffWalking)
+
+glm6 <- update(glm5, . ~ . + PhysicalHealth * DiffWalking + 
+                 PhysicalHealth * MentalHealth +
+                 PhysicalHealth * AgeCategory + PhysicalHealth*AgeCategory)
+
+glm7 <- update(glm6, . ~ . + MentalHealth * Sex + MentalHealth * GenHealth)
+
+glm8 <- update(glm7, . ~ . + DiffWalking * AgeCategory + DiffWalking * Sex)
+
+glm9 <- update(glm8, . ~ . + Sex * AgeCategory)
+
+glm10 <- update(glm9, . ~ . + AgeCategory * Asthma  + AgeCategory * Smoking)
+
+glm11 <- update(glm10, . ~ . - AgeCategory * Asthma  - PhysicalHealth * AgeCategory -
+                  MentalHealth * Sex)
+```
+
+
+```{r, eval=TRUE}
+# compare the models' AIC
+AIC(glm1, glm2, glm3, glm4, glm5, glm6, glm7, glm8, glm9, glm10, glm11)
+
+```
+```{r, eval=TRUE}
+summary(glm10)
+```
+
+In parallel to what we did for the unbalanced dataset, after selecting
+the best model we proceed with the model validation. The selection of
+the best threshold is based on the one that balances the trade-off between precision and recall and the one that maximizes the F1 score. The F1 score is now increased of almost 1%.
+
+```{r, eval=TRUE}
+### MODEL VALIDATION 
+
+pred_b <- predict(glm10, dati_test[,-1], type = "response")
+
+# threshold = 0.1
+pred_b_1 <- ifelse(pred_b >= 0.1, 1, 0)
+mean(pred_b_1) 
+
+# threshold = 0.2
+pred_b_2 <- ifelse(pred_b >= 0.2, 1, 0)
+mean(pred_b_2)
+
+# threshold = 0.3
+pred_b_3 <- ifelse(pred_b >= 0.3, 1, 0)
+mean(pred_b_3) 
+
+# threshold = 0.4
+pred_b_4 <- ifelse(pred_b >= 0.4, 1, 0)
+mean(pred_b_4)
+
+# threshold = 0.5
+pred_b_5 <- ifelse(pred_b >= 0.5, 1, 0)
+mean(pred_b_5)
+
+# the best threshold is 0.1
+```
+
+```{r, eval=TRUE}
+# Confusion matrix
+conf_mat <- table(dati_test$HeartDisease, pred_b_1)
+conf_mat
+```
+
+```{r, eval=TRUE}
+# true positive rate
+TPR <- conf_mat[2, 2]/sum(conf_mat[2, ])
+TPR 
+
+# true negative rate
+TNR <- conf_mat[1, 1]/sum(conf_mat[1, ])
+TNR 
+
+# precision
+PREC <- conf_mat[2, 2]/sum(conf_mat[, 2])
+PREC 
+
+# recall
+REC <- conf_mat[2, 2]/sum(conf_mat[2, ])
+REC 
+
+# F1 score
+F1_glmb <- 2 * (PREC * REC)/(PREC + REC)
+F1_glmb 
+```
+
+We now compute the model validation of the *glm1* model. The results are
+very similar to the best model selected, and the F1 score is slightly
+lower.
+
+```{r, eval=TRUE}
+# we look now at the complete model
+pred_bc <- predict(glm1, dati_test[,-1], type = "response")
+
+# threshold = 0.1
+pred_bc_1 <- ifelse(pred_bc >= 0.1, 1, 0)
+mean(pred_b_1) 
+
+# threshold = 0.2
+pred_bc_2 <- ifelse(pred_bc >= 0.2, 1, 0)
+mean(pred_bc_2)
+
+# threshold = 0.3
+pred_bc_3 <- ifelse(pred_bc >= 0.3, 1, 0)
+mean(pred_bc_3) 
+
+# threshold = 0.4
+pred_bc_4 <- ifelse(pred_bc >= 0.4, 1, 0)
+mean(pred_bc_4)
+
+# threshold = 0.5
+pred_bc_5 <- ifelse(pred_bc >= 0.5, 1, 0)
+mean(pred_bc_5)
+
+# the best threshold is 0.1
+```
+
+```{r, eval=TRUE}
+# Confusion matrix
+conf_mat <- table(dati_test$HeartDisease, pred_bc_1)
+conf_mat
+```
+
+```{r, eval=TRUE}
+# true positive rate
+TPR <- conf_mat[2, 2]/sum(conf_mat[2, ])
+TPR 
+
+# true negative rate
+TNR <- conf_mat[1, 1]/sum(conf_mat[1, ])
+TNR 
+
+# precision
+PREC <- conf_mat[2, 2]/sum(conf_mat[, 2])
+PREC 
+
+# recall
+REC <- conf_mat[2, 2]/sum(conf_mat[2, ])
+REC 
+
+# F1 score
+F1 <- 2 * (PREC * REC)/(PREC + REC)
+F1 
+```
+
+We now explore the ROC curve of the prediction of the *glm10* and *glm1*
+models. By looking at the F1 scores,
+the AIC and the AUC values, we are confident to choose *glm10* as the
+best model.
+
+```{r, eval=TRUE, message=FALSE}
+# ROC curve
+library(pROC)
+par(mfrow=c(1,2))
+roc_b <- roc(dati_test$HeartDisease, pred_b)
+auc_b <- auc(roc_b)
+plot(roc_b, main = "ROC curve glm10", print.auc = TRUE, 
+     auc.polygon = TRUE, max.auc.polygon = TRUE, grid = TRUE, legacy.axes = TRUE, 
+     xlab = "False positive rate", ylab = "True positive rate")
+coords <- coords(roc_b, "best", best.method = "closest.topleft")
+opt_thr <- coords$threshold 
+abline(v = opt_thr, col = "red", lty = 2)
+
+roc_bc <- roc(dati_test$HeartDisease, pred_bc)
+auc_bc <- auc(roc_bc)
+plot(roc_bc, main = "ROC curve glm1", print.auc = TRUE, 
+     auc.polygon = TRUE, max.auc.polygon = TRUE, grid = TRUE, legacy.axes = TRUE, 
+     xlab = "False positive rate", ylab = "True positive rate")
+coords <- coords(roc_bc, "best", best.method = "closest.topleft")
+opt_thr <- coords$threshold 
+abline(v = opt_thr, col = "red", lty = 2)
+```
+
+# Discriminant Analysis
+
+Discriminant Analysis is a technique used to analyze and classify data
+into distinct groups or categories based on a set of predictor
+variables. It aims at identifying the decision boundaries that separate
+different groups or classes in the dataset. It achieves this by
+maximizing the between-class variance and minimizing the within-class
+variance. Discriminant Analysis encompasses two main variants: Linear
+Discriminant Analysis (LDA) and Quadratic Discriminant Analysis (QDA),
+that we will both apply to our unbalanced and balanced datasets.
+
+## Linear Discriminant Analysis
+
+We begin the discriminant analysis with the LDA. It assumes that the
+predictor variables have a multivariate normal distribution within each
+class and that the covariance matrices are equal across all classes. It
+projects the data onto a lower-dimensional space while maximizing the
+ratio of between-class scatter to within-class scatter, leading to a
+linear decision boundary.
+
+### LDA on unbalanced dataset
+
+For this LDA model, we will consider the variables and interactions from
+the GLM analysis that we have previously examined, as they have shown
+improved results, in particular thoes from the *glm10u* model. This
+integration of information aims to maximize the discriminatory power of
+the model and provide us with a robust framework for accurately
+classifying new observations in our binary response variable dataset.
+
+```{r, eval=TRUE}
+library(MASS)
+lda_u <- lda(HeartDisease ~ BMI + Smoking + AlcoholDrinking + 
+               Stroke + PhysicalHealth + MentalHealth + DiffWalking + Sex + 
+               AgeCategory + Diabetic + PhysicalActivity + SleepTime + Asthma + 
+               KidneyDisease + SkinCancer + BMI:Diabetic + BMI:AlcoholDrinking + 
+               Smoking:KidneyDisease + Smoking:AgeCategory + Stroke:DiffWalking + 
+               Stroke:AgeCategory + Smoking:Stroke + PhysicalHealth:DiffWalking + 
+               PhysicalHealth:MentalHealth + PhysicalHealth:AgeCategory + 
+               PhysicalHealth:Diabetic + MentalHealth:Sex + DiffWalking:AgeCategory + 
+               DiffWalking:Sex + Sex:AgeCategory + AgeCategory:Diabetic + 
+               AgeCategory:Asthma + AgeCategory:PhysicalActivity + 
+               AgeCategory:KidneyDisease, data = dati_train, family="binomial")
+lda_u
+```
+
+We now proceed on using the model and the test set for predicting the
+data. We first compute the error rate, then we look for the best
+threshold that gave the lower percentage of misclassified data. After
+selecting 0.6 as threshold, we compute the confusion matrix as well as
+the true positive rate, true negative rate and F1 score. With respect to
+the *glm10u* model there has been an improvement, but it's still very
+low. We can also notice how the AUC is lower than the one of the GLM
+model.
+
+```{r, eval=TRUE}
+# predictions
+lda_u.pred <- predict(lda_u, dati_test[,-1])
+lda_u.post=lda_u.pred$posterior
+lda_u.class <- lda_u.pred$class
+
+# error rate
+mean(lda_u.class != dati_test$HeartDisease) * 100 
+
+# threshold = 0.4
+lda_u.pred4=as.factor(ifelse(lda_u.post[,2] >= 0.4, 1, 0))
+mean(lda_u.pred4!=dati_test$HeartDisease) 
+
+# threshold = 0.5
+lda_u.pred5=as.factor(ifelse(lda_u.post[,2] >= 0.5, 1, 0))
+mean(lda_u.pred5!=dati_test$HeartDisease) 
+
+# threshold = 0.6
+lda_u.pred6=as.factor(ifelse(lda_u.post[,2] >= 0.6, 1, 0))
+mean(lda_u.pred6!=dati_test$HeartDisease) 
+
+# the best threshold is 0.6
+```
+
+```{r, eval=TRUE}
+# Confusion matrix 
+conf_mat <- table(dati_test$HeartDisease, lda_u.pred6)
+conf_mat
+```
+
+```{r, eval=TRUE}
+# true positive rate 
+TPR <- conf_mat[2, 2]/sum(conf_mat[2, ])
+TPR 
+
+# true negative rate
+TNR <- conf_mat[1, 1]/sum(conf_mat[1, ])
+TNR 
+
+# precision
+PREC <- conf_mat[2, 2]/sum(conf_mat[, 2])
+PREC 
+
+# recall
+REC <- conf_mat[2, 2]/sum(conf_mat[2, ])
+REC 
+
+# F1 score
+F1_ldau <- 2 * (PREC * REC)/(PREC + REC)
+F1_ldau 
+```
+
+```{r, eval=TRUE, message=FALSE}
+# ROC curve
+library(pROC)
+roc_u <- roc(dati_test$HeartDisease, lda_u.post[,2])
+coords <- coords(roc_u, "best", best.method = "closest.topleft")
+opt_thr <- coords$threshold 
+plot(roc_u, main = "ROC curve", print.auc = TRUE, auc.polygon = TRUE, 
+     max.auc.polygon = TRUE, grid = TRUE, legacy.axes = TRUE, 
+     xlab = "False positive rate", ylab = "True positive rate")
+auc_u <- auc(roc_u)
+abline(v = opt_thr, col = "red", lty = 2)
+```
+
+From the graph below, by taking the *x* values as linear combination of
+the variables that better describe the observations and as *class* the
+assigned class, we can notice how the LDA function can clearly
+discriminate the two classes, without overlaps.
+
+```{r, eval=TRUE}
+ldahist(lda_u.pred$x[,1], g=lda_u.pred$class, col=2)
+```
+
+### LDA on balanced dataset
+
+We are now repeating the same steps for the balanced dataset. To define
+the LDA model we used the variables and interactions of the *glm10*
+model.
+
+```{r, eval=TRUE}
+lda_b <- lda(formula = HeartDisease ~ BMI + Smoking + AlcoholDrinking + 
+    Stroke + PhysicalHealth + MentalHealth + DiffWalking + Sex + 
+    AgeCategory + Diabetic + PhysicalActivity + GenHealth + SleepTime + 
+    Asthma + KidneyDisease + SkinCancer + BMI:DiffWalking + BMI:GenHealth + 
+    Smoking:AgeCategory + Smoking:GenHealth + Stroke:PhysicalHealth + 
+    Stroke:AgeCategory + Stroke:GenHealth + Stroke:DiffWalking + 
+    PhysicalHealth:DiffWalking + PhysicalHealth:MentalHealth + 
+    PhysicalHealth:AgeCategory + MentalHealth:Sex + MentalHealth:GenHealth + 
+    DiffWalking:AgeCategory + DiffWalking:Sex + Sex:AgeCategory + 
+    AgeCategory:Asthma, data = dati_balanced_train, family="binomial")
+lda_b
+```
+
+We now proceed on using the model and the test set for predicting the
+data. After selecting 0.1 as threshold, we compute the confusion matrix
+as well as the true positive rate, true negative rate and F1 score. The
+results are quite similar to the ones of the *glm10* model, including the AUC value.
+
+```{r, eval=TRUE}
+lda_b.pred <- predict(lda_b, dati_test[,-1])
+lda_b.post=lda_b.pred$posterior
+lda_b.class <- lda_b.pred$class
+
+# error rate
+mean(lda_b.class != dati_test$HeartDisease) * 100 
+
+# threshold = 0.1
+lda_b.pred1=as.factor(ifelse(lda_b.post[,2] >= 0.1, 1, 0))
+mean(lda_b.pred1!=dati_test$HeartDisease)
+
+# threshold = 0.6
+lda_b.pred2=as.factor(ifelse(lda_b.post[,2] >= 0.2, 1, 0))
+mean(lda_b.pred2!=dati_test$HeartDisease)
+
+# threshold = 0.3
+lda_b.pred3=as.factor(ifelse(lda_b.post[,2] >= 0.3, 1, 0))
+mean(lda_b.pred3!=dati_test$HeartDisease)
+
+# threshold = 0.4
+lda_b.pred4=as.factor(ifelse(lda_b.post[,2] >= 0.4, 1, 0))
+mean(lda_b.pred4!=dati_test$HeartDisease) 
+
+# threshold = 0.5
+lda_b.pred5=as.factor(ifelse(lda_b.post[,2] >= 0.5, 1, 0))
+mean(lda_b.pred5!=dati_test$HeartDisease) 
+
+# the best threshold is 0.1
+```
+
+```{r, eval=TRUE}
+# Confusion matrix 
+conf_mat <- table(dati_test$HeartDisease, lda_b.pred1)
+conf_mat
+```
+
+```{r, eval=TRUE}
+# true positive rate
+TPR <- conf_mat[2, 2]/sum(conf_mat[2, ])
+TPR
+
+# true negative rate
+TNR <- conf_mat[1, 1]/sum(conf_mat[1, ])
+TNR 
+
+# precision
+PREC <- conf_mat[2, 2]/sum(conf_mat[, 2])
+PREC 
+
+# recall
+REC <- conf_mat[2, 2]/sum(conf_mat[2, ])
+REC
+
+# F1 score
+F1_ldab <- 2 * (PREC * REC)/(PREC + REC)
+F1_ldab 
+```
+
+```{r, eval=TRUE, message=FALSE}
+# ROC curve
+library(pROC)
+roc_b <- roc(dati_test$HeartDisease, lda_b.post[,2])
+auc_b <- auc(roc_b)
+coords <- coords(roc_b, "best", best.method = "closest.topleft")
+opt_thr <- coords$threshold 
+plot(roc_b, main = "ROC curve", print.auc = TRUE, auc.polygon = TRUE, 
+     max.auc.polygon = TRUE, grid = TRUE, legacy.axes = TRUE, 
+     xlab = "False positive rate", ylab = "True positive rate")
+abline(v = opt_thr, col = "red", lty = 2)
+```
+
+From the graph below we can notice how the LDA function clearly
+discriminates the two classes, without overlaps.
+
+```{r, eval=TRUE}
+ldahist(lda_b.pred$x[,1], g=lda_b.pred$class, col=2)
+```
+
+## Quadratic Discriminant Analysis
+
+The QDA relaxes the assumption of equal covariance matrices across
+classes and allows for different quadratic decision boundaries for each
+class. It can capture more complex relationships between the predictor
+variables and the response variable, at the cost of increased
+computational complexity.
+
+### QDA on unbalanced dataset
+
+As we did for the LDA model, we are considering a model with the same
+variables and interactions of the best glm model.
+
+```{r, eval=TRUE}
+qda_u <- lda(HeartDisease ~ BMI + Smoking + AlcoholDrinking + 
+               Stroke + PhysicalHealth + MentalHealth + DiffWalking + Sex + 
+               AgeCategory + Diabetic + PhysicalActivity + SleepTime + Asthma + 
+               KidneyDisease + SkinCancer + BMI:Diabetic + BMI:AlcoholDrinking + 
+               Smoking:KidneyDisease + Smoking:AgeCategory + Stroke:DiffWalking + 
+               Stroke:AgeCategory + Smoking:Stroke + PhysicalHealth:DiffWalking + 
+               PhysicalHealth:MentalHealth + PhysicalHealth:AgeCategory + 
+               PhysicalHealth:Diabetic + MentalHealth:Sex + DiffWalking:AgeCategory + 
+               DiffWalking:Sex + Sex:AgeCategory + AgeCategory:Diabetic + 
+               AgeCategory:Asthma + AgeCategory:PhysicalActivity + 
+               AgeCategory:KidneyDisease, data = dati_train, family="binomial")
+qda_u
+```
+
+We now proceed on using the model and the test set for predicting the
+data. The results are almost identical to the ones we observed before on
+the LDA.
+
+```{r, eval=TRUE}
+qda_u.pred <- predict(qda_u, dati_test[,-1])
+qda_u.post=qda_u.pred$posterior
+qda_u.class <- qda_u.pred$class
+
+# error rate
+mean(qda_u.class != dati_test$HeartDisease) * 100 
+
+# threshold = 0.4
+qda_u.pred4=as.factor(ifelse(qda_u.post[,2] >= 0.4, 1, 0))
+mean(qda_u.pred4!=dati_test$HeartDisease) 
+
+# threshold = 0.5
+qda_u.pred5=as.factor(ifelse(qda_u.post[,2] >= 0.5, 1, 0))
+mean(qda_u.pred5!=dati_test$HeartDisease) 
+
+# threshold = 0.6
+qda_u.pred6=as.factor(ifelse(qda_u.post[,2] >= 0.6, 1, 0))
+mean(qda_u.pred6!=dati_test$HeartDisease) 
+
+# the best threshold is 0.6
+```
+
+```{r, eval=TRUE}
+# Confusion matrix 
+conf_mat <- table(dati_test$HeartDisease, qda_u.pred6)
+conf_mat
+```
+
+```{r, eval=TRUE}
+# true positive rate
+TPR <- conf_mat[2, 2]/sum(conf_mat[2, ])
+TPR 
+
+# true negative rate
+TNR <- conf_mat[1, 1]/sum(conf_mat[1, ])
+TNR 
+
+# precision
+PREC <- conf_mat[2, 2]/sum(conf_mat[, 2])
+PREC 
+
+# recall
+REC <- conf_mat[2, 2]/sum(conf_mat[2, ])
+REC 
+
+# F1 score
+F1_qdau <- 2 * (PREC * REC)/(PREC + REC)
+F1_qdau 
+```
+
+```{r, eval=TRUE, message=FALSE}
+# ROC curve
+library(pROC)
+roc_u_qda <- roc(dati_test$HeartDisease, qda_u.post[,2])
+auc_u_qda <- auc(roc_u_qda)
+coords <- coords(roc_u_qda, "best", best.method = "closest.topleft")
+opt_thr <- coords$threshold 
+plot(roc_u_qda, main = "ROC curve", print.auc = TRUE, 
+     auc.polygon = TRUE, max.auc.polygon = TRUE, grid = TRUE, legacy.axes = TRUE, 
+     xlab = "False positive rate", ylab = "True positive rate")
+abline(v = opt_thr, col = "red", lty = 2)
+```
+
+### QDA on balanced dataset
+
+We are now repeating the same operations but on the balanced dataset. We
+notice that the F1 score, but especially the AUC value, are lower than
+the other models.
+
+```{r, eval=TRUE}
+qda_b <- qda(formula = HeartDisease ~ BMI + Smoking + AlcoholDrinking + 
+    Stroke + PhysicalHealth + MentalHealth + DiffWalking + Sex + 
+    AgeCategory + Diabetic + PhysicalActivity + GenHealth + SleepTime + 
+    Asthma + KidneyDisease + SkinCancer + BMI:DiffWalking + BMI:GenHealth + 
+    Smoking:AgeCategory + Smoking:GenHealth + Stroke:PhysicalHealth + 
+    Stroke:AgeCategory + Stroke:GenHealth + Stroke:DiffWalking + 
+    PhysicalHealth:DiffWalking + PhysicalHealth:MentalHealth + 
+    PhysicalHealth:AgeCategory + MentalHealth:Sex + MentalHealth:GenHealth + 
+    DiffWalking:AgeCategory + DiffWalking:Sex + Sex:AgeCategory + 
+    AgeCategory:Asthma, data = dati_balanced_train, family="binomial")
+qda_b
+```
+
+```{r, eval=TRUE}
+qda_b.pred <- predict(qda_b, dati_test[,-1])
+qda_b.post=qda_b.pred$posterior
+qda_b.class <- qda_b.pred$class
+
+# error rate
+mean(qda_b.class != dati_test$HeartDisease) * 100 
+
+# threshold = 0.1
+qda_b.pred1=as.factor(ifelse(qda_b.post[,2] >= 0.1, 1, 0))
+mean(qda_b.pred1!=dati_test$HeartDisease) 
+
+# threshold = 0.2
+qda_b.pred2=as.factor(ifelse(qda_b.post[,2] >= 0.2, 1, 0))
+mean(qda_b.pred2!=dati_test$HeartDisease) 
+
+# threshold = 0.3
+qda_b.pred3=as.factor(ifelse(qda_b.post[,2] >= 0.3, 1, 0))
+mean(qda_b.pred3!=dati_test$HeartDisease) 
+
+# threshold = 0.4
+qda_b.pred4=as.factor(ifelse(qda_b.post[,2] >= 0.4, 1, 0))
+mean(qda_b.pred4!=dati_test$HeartDisease) 
+
+# threshold = 0.5
+qda_b.pred5=as.factor(ifelse(qda_b.post[,2] >= 0.5, 1, 0))
+mean(qda_b.pred5!=dati_test$HeartDisease) 
+
+# the best threshold is 0.1
+```
+
+```{r, eval=TRUE}
+# Confusion matrix 
+conf_mat <- table(dati_test$HeartDisease, qda_b.pred1)
+conf_mat
+```
+
+```{r, eval=TRUE}
+# true positive rate
+TPR <- conf_mat[2, 2]/sum(conf_mat[2, ])
+TPR 
+
+# true negative rate
+TNR <- conf_mat[1, 1]/sum(conf_mat[1, ])
+TNR 
+
+# precision
+PREC <- conf_mat[2, 2]/sum(conf_mat[, 2])
+PREC
+
+# recall
+REC <- conf_mat[2, 2]/sum(conf_mat[2, ])
+REC 
+
+# F1 score
+F1_qdab <- 2 * (PREC * REC)/(PREC + REC)
+F1_qdab 
+```
+
+```{r, eval=TRUE, message=FALSE}
+# ROC curve
+library(pROC)
+roc_b <- roc(dati_test$HeartDisease, qda_b.post[,2])
+auc_b <- auc(roc_b)
+coords <- coords(roc_b, "best", best.method = "closest.topleft")
+opt_thr <- coords$threshold 
+plot(roc_b, main = "ROC curve", print.auc = TRUE, auc.polygon = TRUE, 
+     max.auc.polygon = TRUE, grid = TRUE, legacy.axes = TRUE, 
+     xlab = "False positive rate", ylab = "True positive rate")
+abline(v = 1-opt_thr, col = "red", lty = 2)
+```
+
+# Shrinkage methods
+
+We will now model our dataset with shrinkage methods: ridge and lasso.
+Shrinkage methods aim to address two common challenges in regression
+analysis: multicollinearity and overfitting. Ridge regression and lasso
+regression both introduce a penalty term to the ordinary least squares
+(OLS) objective function, which helps to control the complexity of the
+model and mitigate the effects of multicollinearity. Ridge regression
+adds a penalty term that is proportional to the sum of squared
+coefficients, effectively shrinking the coefficients towards zero but
+without setting them exactly to zero. This leads to more stable
+coefficient estimates, reducing the impact of multicollinearity and
+improving model performance. Lasso regression, on the other hand, adds a
+penalty term that is proportional to the sum of the absolute values of
+the coefficients. This has the effect of both shrinking coefficients
+towards zero and performing variable selection by setting some
+coefficients exactly to zero. Lasso regression can effectively identify
+and exclude irrelevant predictors from the model, providing a sparse
+solution that only includes the most important predictors. Although
+multicollinearity and overfitting are not significant concerns in our
+dataset, it is still worthwhile to explore whether ridge and lasso
+regression can yield improved performance compared to other models.
+
+## Ridge regression
+
+### Unbalanced dataset
+
+We are now applying the ridge regression to the unbalanced dataset. As
+we did for the LDA and QDA, we will consider the significant variables
+and interactions of the best glm model. With the object *ridge_u.cv* we
+are defining the cross-validation with ridge logistic regression, and
+the following plot displays the cross-validated error as a function of
+the log(lambda) values, where lambda represents the tuning parameter
+controlling the amount of shrinkage. We then extract the optimal lambda
+value that minimizes the cross-validated error and use it to obtain
+predictions on the test dataset. We notice the same pattern we saw with
+the other models, so a very low F1 score. The AUC value is bigger than
+the previous models, but still lower than the glm.
+
+```{r, eval=TRUE, warning=FALSE}
+library(glmnet)
+library(tidyverse)
+
+# interaction matrix
+dati_inter <- transform(dati_train[,-c(11,14)],
+                        BMI_Diabetic = BMI * Diabetic,
+                        BMI_AlcoholDrinking = BMI * AlcoholDrinking,
+                        Smoking_KidneyDisease = Smoking * KidneyDisease,
+                        Smoking_AgeCategory = Smoking * AgeCategory,
+                        Stroke_DiffWalking = Stroke * DiffWalking,
+                        Stroke_AgeCategory = Stroke * AgeCategory,
+                        Smoking_Stroke = Smoking * Stroke,
+                        PhysicalHealth_DiffWalking = PhysicalHealth * DiffWalking,
+                        PhysicalHealth_MentalHealth = PhysicalHealth * MentalHealth,
+                        PhysicalHealth_AgeCategory = PhysicalHealth * AgeCategory,
+                        PhysicalHealth_Diabetic = PhysicalHealth * Diabetic,
+                        MentalHealth_Sex = MentalHealth * Sex,
+                        DiffWalking_AgeCategory = DiffWalking * AgeCategory,
+                        DiffWalking_Sex = DiffWalking * Sex,
+                        Sex_AgeCategory = Sex * AgeCategory,
+                        AgeCategory_Diabetic = AgeCategory * Diabetic,
+                        AgeCategory_Asthma = AgeCategory * Asthma,
+                        AgeCategory_PhysicalActivity = AgeCategory * PhysicalActivity,
+                        AgeCategory_KidneyDisease = AgeCategory * KidneyDisease)
+
+formula <- HeartDisease ~ BMI + Smoking + AlcoholDrinking + Stroke + PhysicalHealth +
+  MentalHealth + DiffWalking + Sex + AgeCategory + Diabetic + 
+  PhysicalActivity + SleepTime + Asthma + KidneyDisease + SkinCancer + 
+  BMI_Diabetic + BMI_AlcoholDrinking + Smoking_KidneyDisease + Smoking_AgeCategory +
+  Stroke_DiffWalking + Stroke_AgeCategory + Smoking_Stroke +
+  PhysicalHealth_DiffWalking + PhysicalHealth_MentalHealth +
+  PhysicalHealth_AgeCategory + PhysicalHealth_Diabetic + MentalHealth_Sex +
+  DiffWalking_AgeCategory + DiffWalking_Sex + Sex_AgeCategory +
+  AgeCategory_Diabetic + AgeCategory_Asthma +
+  AgeCategory_PhysicalActivity + AgeCategory_KidneyDisease
+
+design_matrix <- model.matrix(formula, data = dati_inter)
+
+ridge_u.cv <- cv.glmnet(x = design_matrix, y = dati_inter$HeartDisease, 
+                        family = "binomial", alpha = 0, type.measure = "class")
+
+dati_test_inter <-transform(dati_test[,-c(11,14)],
+                           BMI_Diabetic = BMI * Diabetic,
+                           BMI_AlcoholDrinking = BMI * AlcoholDrinking,
+                           Smoking_KidneyDisease = Smoking * KidneyDisease,
+                           Smoking_AgeCategory = Smoking * AgeCategory,
+                           Stroke_DiffWalking = Stroke * DiffWalking,
+                           Stroke_AgeCategory = Stroke * AgeCategory,
+                           Smoking_Stroke = Smoking * Stroke,
+                           PhysicalHealth_DiffWalking=PhysicalHealth*DiffWalking,
+                           PhysicalHealth_MentalHealth=PhysicalHealth*MentalHealth,
+                           PhysicalHealth_AgeCategory=PhysicalHealth*AgeCategory,
+                           PhysicalHealth_Diabetic = PhysicalHealth * Diabetic,
+                           MentalHealth_Sex = MentalHealth * Sex,
+                           DiffWalking_AgeCategory = DiffWalking * AgeCategory,
+                           DiffWalking_Sex = DiffWalking * Sex,
+                           Sex_AgeCategory = Sex * AgeCategory,
+                           AgeCategory_Diabetic = AgeCategory * Diabetic,
+                           AgeCategory_Asthma = AgeCategory * Asthma,
+                           AgeCategory_PhysicalActivity=AgeCategory*PhysicalActivity,
+                           AgeCategory_KidneyDisease = AgeCategory * KidneyDisease)
+
+design_matrix_test <- model.matrix(formula, data = dati_test_inter)
+
+plot(ridge_u.cv)
+```
+
+```{r, eval=TRUE}
+# optimal lambda
+lmin <- ridge_u.cv$lambda.min
+lmin
+
+# predictions with optimal lambda
+ridge_u.predmin <- predict(ridge_u.cv, newx= design_matrix_test %>%
+                                   as.matrix(), type="response", s = lmin)
+ridge_u.predmin_class <- predict(ridge_u.cv, newx= design_matrix_test %>%
+                                   as.matrix(), type="class", s = lmin)
+```
+
+```{r, eval=TRUE}
+# Confusion matrix 
+conf_mat <- table(dati_test$HeartDisease, ridge_u.predmin_class)
+conf_mat
+```
+
+```{r, eval=TRUE}
+# true positive rate
+TPR <- conf_mat[2, 2]/sum(conf_mat[2, ])
+TPR 
+
+# true negative rate
+TNR <- conf_mat[1, 1]/sum(conf_mat[1, ])
+TNR 
+
+# precision
+PREC <- conf_mat[2, 2]/sum(conf_mat[, 2])
+PREC 
+
+# recall
+REC <- conf_mat[2, 2]/sum(conf_mat[2, ])
+REC 
+
+# F1 score
+F1_ridgeu <- 2 * (PREC * REC)/(PREC + REC)
+F1_ridgeu 
+```
+
+```{r, eval=TRUE, message=FALSE}
+# ROC curve
+library(pROC)
+roc_u <- roc(dati_test$HeartDisease, as.numeric(ridge_u.predmin))
+auc_u <- auc(roc_u)
+coords <- coords(roc_u, "best", best.method = "closest.topleft")
+opt_thr <- coords$threshold 
+plot(roc_u, main = "ROC curve", print.auc = TRUE, auc.polygon = TRUE, 
+     max.auc.polygon = TRUE, grid = TRUE, legacy.axes = TRUE, 
+     xlab = "False positive rate", ylab = "True positive rate")
+abline(v = 1-opt_thr, col = "red", lty = 2)
+```
+
+### Balanced dataset
+
+We are now applying the ridge regression to the balanced dataset,
+considering the variables and interactions of the best glm model. As we
+did for the unbalanced dataset, we are defining the cross-validation
+with ridge logistic regression, and the following plot displays the
+cross-validated error as a function of the log(lambda) values. We then
+extract the optimal lambda value that minimizes the cross-validated
+error and use it to obtain predictions on the test dataset. We can
+notice that the performance metrics lowered, as well as the AUC value.
+
+```{r, eval=TRUE, warning=FALSE}
+library(glmnet)
+library(tidyverse)
+
+# interaction matrix
+dati_inter <- transform(dati_balanced_train[,-11],
+                        BMI_DiffWalking = BMI * DiffWalking,
+                        BMI_GenHealth = BMI * GenHealth,
+                        Smoking_AgeCategory = Smoking * AgeCategory,
+                        Smoking_GenHealth = Smoking * GenHealth,
+                        Stroke_PhysicalHealth = Stroke * PhysicalHealth,
+                        Stroke_AgeCategory = Stroke * AgeCategory,
+                        Stroke_GenHealth = Stroke * GenHealth,
+                        Stroke_DiffWalking = Stroke * DiffWalking,
+                        PhysicalHealth_DiffWalking = PhysicalHealth * DiffWalking,
+                        PhysicalHealth_MentalHealth = PhysicalHealth * MentalHealth,
+                        PhysicalHealth_AgeCategory = PhysicalHealth * AgeCategory,
+                        MentalHealth_Sex = MentalHealth * Sex,
+                        MentalHealth_GenHealth = MentalHealth * GenHealth,
+                        DiffWalking_AgeCategory = DiffWalking * AgeCategory,
+                        DiffWalking_Sex = DiffWalking * Sex,
+                        Sex_AgeCategory = Sex * AgeCategory,
+                        AgeCategory_Asthma = AgeCategory * Asthma)
+
+formula <- HeartDisease ~ BMI + Smoking + AlcoholDrinking + 
+    Stroke + PhysicalHealth + MentalHealth + DiffWalking + Sex + 
+    AgeCategory + Diabetic + PhysicalActivity + GenHealth + SleepTime + 
+    Asthma + KidneyDisease + SkinCancer + BMI:DiffWalking + BMI:GenHealth + 
+    Smoking:AgeCategory + Smoking:GenHealth + Stroke:PhysicalHealth + 
+    Stroke:AgeCategory + Stroke:GenHealth + Stroke:DiffWalking + 
+    PhysicalHealth:DiffWalking + PhysicalHealth:MentalHealth + 
+    PhysicalHealth:AgeCategory + MentalHealth:Sex + MentalHealth:GenHealth + 
+    DiffWalking:AgeCategory + DiffWalking:Sex + Sex:AgeCategory + 
+    AgeCategory:Asthma
+
+design_matrix <- model.matrix(formula, data = dati_inter)
+
+dati_test_inter <- transform(dati_test[,-11],
+                            BMI_DiffWalking = BMI * DiffWalking,
+                            BMI_GenHealth = BMI * GenHealth,
+                            Smoking_AgeCategory = Smoking * AgeCategory,
+                            Smoking_GenHealth = Smoking * GenHealth,
+                            Stroke_PhysicalHealth = Stroke * PhysicalHealth,
+                            Stroke_AgeCategory = Stroke * AgeCategory,
+                            Stroke_GenHealth = Stroke * GenHealth,
+                            Stroke_DiffWalking = Stroke * DiffWalking,
+                            PhysicalHealth_DiffWalking = PhysicalHealth*DiffWalking,
+                            PhysicalHealth_MentalHealth = PhysicalHealth*MentalHealth,
+                            PhysicalHealth_AgeCategory = PhysicalHealth*AgeCategory,
+                            MentalHealth_Sex = MentalHealth * Sex,
+                            MentalHealth_GenHealth = MentalHealth * GenHealth,
+                            DiffWalking_AgeCategory = DiffWalking * AgeCategory,
+                            DiffWalking_Sex = DiffWalking * Sex,
+                            Sex_AgeCategory = Sex * AgeCategory,
+                            AgeCategory_Asthma = AgeCategory * Asthma)
+
+design_matrix_test <- model.matrix(formula, data = dati_test_inter)
+
+ridge_b.cv <- cv.glmnet(x = design_matrix, y = dati_inter$HeartDisease, family = "binomial", alpha = 0, type.measure = "class")
+
+plot(ridge_b.cv)
+```
+
+```{r, eval=TRUE}
+# optimal lambda
+lmin <- ridge_b.cv$lambda.min
+lmin
+
+# predictions with optimal lambda
+ridge_b.predmin <- predict(ridge_b.cv, newx= design_matrix_test %>%
+                                   as.matrix(), type="response", s = lmin)
+ridge_b.predmin_class <- predict(ridge_b.cv, newx= design_matrix_test %>%
+                                   as.matrix(), type="class", s = lmin)
+```
+
+```{r, eval=TRUE}
+# Confusion matrix 
+conf_mat <- table(dati_test$HeartDisease, ridge_b.predmin_class)
+conf_mat
+```
+
+```{r, eval=TRUE}
+# true positive rate
+TPR <- conf_mat[2, 2]/sum(conf_mat[2, ])
+TPR
+
+# true negative rate
+TNR <- conf_mat[1, 1]/sum(conf_mat[1, ])
+TNR 
+
+# precision
+PREC <- conf_mat[2, 2]/sum(conf_mat[, 2])
+PREC 
+
+# recall
+REC <- conf_mat[2, 2]/sum(conf_mat[2, ])
+REC 
+
+# F1 score
+F1_ridgeb <- 2 * (PREC * REC)/(PREC + REC)
+F1_ridgeb 
+```
+
+```{r, eval=TRUE, message=FALSE}
+# ROC curve
+library(pROC)
+roc_b <- roc(dati_test$HeartDisease, as.numeric(ridge_b.predmin))
+auc_b <- auc(roc_b)
+coords <- coords(roc_b, "best", best.method = "closest.topleft")
+opt_thr <- coords$threshold 
+plot(roc_b, main = "ROC curve", print.auc = TRUE, 
+     auc.polygon = TRUE, max.auc.polygon = TRUE, grid = TRUE, legacy.axes = TRUE, 
+     xlab = "False positive rate", ylab = "True positive rate")
+abline(v = 1-opt_thr, col = "red", lty = 2)
+```
+
+## Lasso regression
+
+### Unbalanced dataset
+
+Similarly as we did for the ridge regression, we are now applying the
+lasso regression. From the results we can notice how it performs better
+than the ridge regression in terms of F1 score.
+
+```{r, eval=TRUE}
+library(glmnet)
+library(tidyverse)
+dati_inter <- transform(dati_train[,-c(11,14)],
+                        BMI_Diabetic = BMI * Diabetic,
+                        BMI_AlcoholDrinking = BMI * AlcoholDrinking,
+                        Smoking_KidneyDisease = Smoking * KidneyDisease,
+                        Smoking_AgeCategory = Smoking * AgeCategory,
+                        Stroke_DiffWalking = Stroke * DiffWalking,
+                        Stroke_AgeCategory = Stroke * AgeCategory,
+                        Smoking_Stroke = Smoking * Stroke,
+                        PhysicalHealth_DiffWalking = PhysicalHealth * DiffWalking,
+                        PhysicalHealth_MentalHealth = PhysicalHealth * MentalHealth,
+                        PhysicalHealth_AgeCategory = PhysicalHealth * AgeCategory,
+                        PhysicalHealth_Diabetic = PhysicalHealth * Diabetic,
+                        MentalHealth_Sex = MentalHealth * Sex,
+                        DiffWalking_AgeCategory = DiffWalking * AgeCategory,
+                        DiffWalking_Sex = DiffWalking * Sex,
+                        Sex_AgeCategory = Sex * AgeCategory,
+                        AgeCategory_Diabetic = AgeCategory * Diabetic,
+                        AgeCategory_Asthma = AgeCategory * Asthma,
+                        AgeCategory_PhysicalActivity = AgeCategory * PhysicalActivity,
+                        AgeCategory_KidneyDisease = AgeCategory * KidneyDisease)
+
+formula <- HeartDisease ~ BMI + Smoking + AlcoholDrinking + Stroke + PhysicalHealth +
+         MentalHealth + DiffWalking + Sex + AgeCategory + Diabetic + PhysicalActivity +
+         SleepTime + Asthma + KidneyDisease + SkinCancer + BMI_Diabetic +
+         BMI_AlcoholDrinking + Smoking_KidneyDisease + Smoking_AgeCategory +
+         Stroke_DiffWalking + Stroke_AgeCategory + Smoking_Stroke +
+         PhysicalHealth_DiffWalking + PhysicalHealth_MentalHealth +
+         PhysicalHealth_AgeCategory + PhysicalHealth_Diabetic + MentalHealth_Sex +
+         DiffWalking_AgeCategory + DiffWalking_Sex + Sex_AgeCategory +
+         AgeCategory_Diabetic + AgeCategory_Asthma +
+         AgeCategory_PhysicalActivity + AgeCategory_KidneyDisease
+
+design_matrix <- model.matrix(formula, data = dati_inter)
+
+lasso_u.cv <- cv.glmnet(x = design_matrix, y = dati_inter$HeartDisease, 
+                        family = "binomial", alpha = 1, type.measure = "class")
+
+dati_test_inter <- transform(dati_test[,-c(11,14)],
+                             BMI_Diabetic = BMI * Diabetic,
+                             BMI_AlcoholDrinking = BMI * AlcoholDrinking,
+                             Smoking_KidneyDisease = Smoking * KidneyDisease,
+                             Smoking_AgeCategory = Smoking * AgeCategory,
+                             Stroke_DiffWalking = Stroke * DiffWalking,
+                             Stroke_AgeCategory = Stroke * AgeCategory,
+                             Smoking_Stroke = Smoking * Stroke,
+                             PhysicalHealth_DiffWalking=PhysicalHealth*DiffWalking,
+                             PhysicalHealth_MentalHealth=PhysicalHealth*MentalHealth,
+                             PhysicalHealth_AgeCategory=PhysicalHealth*AgeCategory,
+                             PhysicalHealth_Diabetic = PhysicalHealth * Diabetic,
+                             MentalHealth_Sex = MentalHealth * Sex,
+                             DiffWalking_AgeCategory = DiffWalking * AgeCategory,
+                             DiffWalking_Sex = DiffWalking * Sex,
+                             Sex_AgeCategory = Sex * AgeCategory,
+                             AgeCategory_Diabetic = AgeCategory * Diabetic,
+                             AgeCategory_Asthma = AgeCategory * Asthma,
+                             AgeCategory_PhysicalActivity=AgeCategory*PhysicalActivity,
+                             AgeCategory_KidneyDisease=AgeCategory*KidneyDisease)
+
+design_matrix_test <- model.matrix(formula, data = dati_test_inter)
+plot(lasso_u.cv)
+```
+
+It can be noticed that the lambda is very low (close to 0), which implies that the regularization effect is weak, and the lasso regression model will closely resemble ordinary linear regression. The coefficients will be estimated without much constraint, potentially leading to a larger number of non-zero coefficients. 
+
+```{r, eval=TRUE}
+# optimal lambda
+lmin <- lasso_u.cv$lambda.min
+lmin 
+
+# MSE with best lambda
+lasso_u.predmin <- predict(lasso_u.cv, newx= design_matrix_test %>%
+                                   as.matrix(), type="response", s = lmin)
+lasso_u.predmin_class <- predict(lasso_u.cv, newx= design_matrix_test %>%
+                                   as.matrix(), type="class", s = lmin)
+
+```
+
+```{r, eval=TRUE}
+# Confusion matrix 
+conf_mat <- table(dati_test$HeartDisease, lasso_u.predmin_class)
+conf_mat
+```
+
+```{r, eval=TRUE}
+# true positive rate
+TPR <- conf_mat[2, 2]/sum(conf_mat[2, ])
+TPR 
+
+# true negative rate
+TNR <- conf_mat[1, 1]/sum(conf_mat[1, ])
+TNR 
+
+# precision
+PREC <- conf_mat[2, 2]/sum(conf_mat[, 2])
+PREC
+
+# recall
+REC <- conf_mat[2, 2]/sum(conf_mat[2, ])
+REC 
+
+# F1 score
+F1_lassou <- 2 * (PREC * REC)/(PREC + REC)
+F1_lassou 
+```
+
+```{r, eval=TRUE, message=FALSE}
+# ROC curve
+library(pROC)
+roc_u <- roc(dati_test$HeartDisease, as.numeric(lasso_u.predmin))
+auc_u <- auc(roc_u)
+coords <- coords(roc_u, "best", best.method = "closest.topleft")
+opt_thr <- coords$threshold 
+plot(roc_u, main = "ROC curve", print.auc = TRUE, 
+     auc.polygon = TRUE, max.auc.polygon = TRUE, grid = TRUE, legacy.axes = TRUE, 
+     xlab = "False positive rate", ylab = "True positive rate")
+abline(v = 1-opt_thr, col = "red", lty = 2)
+```
+
+### Balanced dataset
+
+We are now applying the lasso regression to the balanced dataset, which
+performs similarly to the ridge regression but better in terms of AUC
+value.
+
+```{r, eval=TRUE}
+library(glmnet)
+library(tidyverse)
+
+dati_inter <- transform(dati_balanced_train[,-11],
+                        BMI_DiffWalking = BMI * DiffWalking,
+                        BMI_GenHealth = BMI * GenHealth,
+                        Smoking_AgeCategory = Smoking * AgeCategory,
+                        Smoking_GenHealth = Smoking * GenHealth,
+                        Stroke_PhysicalHealth = Stroke * PhysicalHealth,
+                        Stroke_AgeCategory = Stroke * AgeCategory,
+                        Stroke_GenHealth = Stroke * GenHealth,
+                        Stroke_DiffWalking = Stroke * DiffWalking,
+                        PhysicalHealth_DiffWalking = PhysicalHealth * DiffWalking,
+                        PhysicalHealth_MentalHealth = PhysicalHealth * MentalHealth,
+                        PhysicalHealth_AgeCategory = PhysicalHealth * AgeCategory,
+                        MentalHealth_Sex = MentalHealth * Sex,
+                        MentalHealth_GenHealth = MentalHealth * GenHealth,
+                        DiffWalking_AgeCategory = DiffWalking * AgeCategory,
+                        DiffWalking_Sex = DiffWalking * Sex,
+                        Sex_AgeCategory = Sex * AgeCategory,
+                        AgeCategory_Asthma = AgeCategory * Asthma)
+
+formula <- HeartDisease ~ BMI + Smoking + AlcoholDrinking + 
+    Stroke + PhysicalHealth + MentalHealth + DiffWalking + Sex + 
+    AgeCategory + Diabetic + PhysicalActivity + GenHealth + SleepTime + 
+    Asthma + KidneyDisease + SkinCancer + BMI:DiffWalking + BMI:GenHealth + 
+    Smoking:AgeCategory + Smoking:GenHealth + Stroke:PhysicalHealth + 
+    Stroke:AgeCategory + Stroke:GenHealth + Stroke:DiffWalking + 
+    PhysicalHealth:DiffWalking + PhysicalHealth:MentalHealth + 
+    PhysicalHealth:AgeCategory + MentalHealth:Sex + MentalHealth:GenHealth + 
+    DiffWalking:AgeCategory + DiffWalking:Sex + Sex:AgeCategory + 
+    AgeCategory:Asthma
+
+design_matrix <- model.matrix(formula, data = dati_inter)
+
+dati_test_inter <- transform(dati_test[,-11],
+                        BMI_DiffWalking = BMI * DiffWalking,
+                        BMI_GenHealth = BMI * GenHealth,
+                        Smoking_AgeCategory = Smoking * AgeCategory,
+                        Smoking_GenHealth = Smoking * GenHealth,
+                        Stroke_PhysicalHealth = Stroke * PhysicalHealth,
+                        Stroke_AgeCategory = Stroke * AgeCategory,
+                        Stroke_GenHealth = Stroke * GenHealth,
+                        Stroke_DiffWalking = Stroke * DiffWalking,
+                        PhysicalHealth_DiffWalking = PhysicalHealth * DiffWalking,
+                        PhysicalHealth_MentalHealth = PhysicalHealth * MentalHealth,
+                        PhysicalHealth_AgeCategory = PhysicalHealth * AgeCategory,
+                        MentalHealth_Sex = MentalHealth * Sex,
+                        MentalHealth_GenHealth = MentalHealth * GenHealth,
+                        DiffWalking_AgeCategory = DiffWalking * AgeCategory,
+                        DiffWalking_Sex = DiffWalking * Sex,
+                        Sex_AgeCategory = Sex * AgeCategory,
+                        AgeCategory_Asthma = AgeCategory * Asthma)
+
+design_matrix_test <- model.matrix(formula, data = dati_test_inter)
+
+lasso_b.cv <- cv.glmnet(x = design_matrix, y = dati_inter$HeartDisease, 
+                        family = "binomial", alpha = 1, type.measure = "class")
+plot(lasso_b.cv)
+```
+
+As for the unbalanced dataset, the minimum lambda is close to zero.
+
+```{r, eval=TRUE}
+# optimal lambda
+lmin <- lasso_b.cv$lambda.min
+lmin
+
+# predictions with optimal lambda
+lasso_b.predmin <- predict(lasso_b.cv, newx= design_matrix_test %>%
+                                   as.matrix(), type="response", s = lmin)
+lasso_b.predmin_class <- predict(lasso_b.cv, newx= design_matrix_test %>%
+                                   as.matrix(), type="class", s = lmin)
+
+```
+
+```{r, eval=TRUE}
+# Confusion matrix 
+conf_mat <- table(dati_test$HeartDisease, lasso_b.predmin_class)
+conf_mat
+```
+
+```{r, eval=TRUE}
+# true positive rate
+TPR <- conf_mat[2, 2]/sum(conf_mat[2, ])
+TPR 
+
+# true negative rate
+TNR <- conf_mat[1, 1]/sum(conf_mat[1, ])
+TNR 
+
+# precision
+PREC <- conf_mat[2, 2]/sum(conf_mat[, 2])
+PREC 
+
+# recall
+REC <- conf_mat[2, 2]/sum(conf_mat[2, ])
+REC 
+
+# F1 score
+F1_lassob <- 2 * (PREC * REC)/(PREC + REC)
+F1_lassob 
+```
+
+```{r, eval=TRUE, message=FALSE}
+# ROC curve
+library(pROC)
+roc_b <- roc(dati_test$HeartDisease, as.numeric(lasso_b.predmin))
+auc_b <- auc(roc_b)
+coords <- coords(roc_b, "best", best.method = "closest.topleft")
+opt_thr <- coords$threshold 
+plot(roc_b, main = "ROC curve", print.auc = TRUE, 
+     auc.polygon = TRUE, max.auc.polygon = TRUE, grid = TRUE, legacy.axes = TRUE, 
+     xlab = "False positive rate", ylab = "True positive rate")
+abline(v = 1-opt_thr, col = "red", lty = 2)
+
+```
+
+# Non-parametric model
+
+K-Nearest Neighbors (KNN) is a non-parametric classification algorithm
+that we are considering as the final model for our dataset. It is a
+simple yet effective algorithm that makes predictions based on the
+similarity of a new observation to its k nearest neighbors in the
+training data. In KNN, the value of k represents the number of neighbors
+to consider when making a prediction. When a new observation needs to be
+classified, the algorithm finds the k nearest neighbors in the training
+data based on a chosen distance metric, such as Euclidean distance. The
+majority class among these k neighbors is then assigned to the new
+observation.
+
+## KNN
+
+### Unbalanced dataset
+
+Before training our final knn model, we do a cross-validation to find
+the optimal value of k.
+
+```         
+k_grid <- seq(1, 10, by = 2)  
+
+# Cross-validation on different k values
+knn_model <- train(dati_train, dati_train$HeartDisease , method = "knn", 
+                  trControl = trainControl(method = "cv", number = 10), 
+                  tuneGrid = data.frame(k = k_grid))
+
+# Optimal value of k
+best_k <- knn_model$bestTune$k
+```
+
+```{r, include=FALSE}
+best_k<-3
+```
+
+We find by this cross-validation that the optimal value of k is equal to
+3.
+
+```{r, eval=TRUE}
+best_k
+```
+
+We can now define the knn model and evaluate its performance using the error rate and F1 score. By looking at these results we can say that this model does not
+bring improvements in terms of F1 score, as well as AUC value.
+
+```{r, eval=TRUE}
+library(class)
+knn_u <- knn(train = dati_train[,-1], test = dati_test[,-1], 
+             cl = dati_train$HeartDisease, k = best_k)
+
+# error rate
+mean(knn_u != dati_test$HeartDisease) * 100 
+```
+
+```{r, eval=TRUE}
+# Confusion matrix 
+conf_mat <- table(dati_test$HeartDisease, knn_u)
+conf_mat
+```
+
+```{r, eval=TRUE}
+# true positive rate
+TPR <- conf_mat[2, 2]/sum(conf_mat[2, ])
+TPR 
+
+# true negative rate
+TNR <- conf_mat[1, 1]/sum(conf_mat[1, ])
+TNR 
+
+# precision
+PREC <- conf_mat[2, 2]/sum(conf_mat[, 2])
+PREC 
+
+# recall
+REC <- conf_mat[2, 2]/sum(conf_mat[2, ])
+REC 
+
+# F1 score
+F1_knnu <- 2 * (PREC * REC)/(PREC + REC)
+F1_knnu 
+```
+
+```{r, eval=TRUE, message=FALSE}
+# ROC curve
+library(pROC)
+roc_u <- roc(dati_test$HeartDisease, as.numeric(knn_u))
+auc_u <- auc(roc_u)
+plot(roc_u, main = "ROC curve", print.auc = TRUE, auc.polygon = TRUE, 
+     max.auc.polygon = TRUE, grid = TRUE, legacy.axes = TRUE, 
+     xlab = "False positive rate", ylab = "True positive rate")
+```
+
+### Balanced dataset
+
+We define the knn model for the balanced dataset as we did for the
+unbalanced dataset so, before training the model, we do a
+cross-validation to find the optimal value of k.
+
+```{r, eval=TRUE}
+k_grid <- seq(1, 10, by = 2) 
+
+# Cross-validation on different k values
+knn_model <- train(dati_balanced_train, as.factor(dati_balanced_train$HeartDisease),
+                   method = "knn", 
+                   trControl = trainControl(method = "cv", number = 10), 
+                   tuneGrid = data.frame(k = k_grid))
+
+# Optimal value of k
+best_k <- knn_model$bestTune$k
+```
+
+We find by this cross-validation that the optimal value of k is equal to
+7.
+
+```{r, eval=TRUE}
+best_k
+```
+
+The model can now be trained. This model brings no improvements with
+respect to the previous models.
+
+```{r, eval=TRUE}
+library(class)
+knn_b <- knn(train = dati_balanced_train[,-1], test = dati_test[,-1], 
+             cl = dati_balanced_train$HeartDisease, k = best_k)
+
+# error rate
+mean(knn_b != dati_test$HeartDisease) * 100 
+```
+
+```{r, eval=TRUE}
+# Confusion matrix 
+conf_mat <- table(dati_test$HeartDisease, knn_b)
+conf_mat
+```
+
+```{r, eval=TRUE}
+# true positive rate
+TPR <- conf_mat[2, 2]/sum(conf_mat[2, ])
+TPR 
+
+# true negative rate
+TNR <- conf_mat[1, 1]/sum(conf_mat[1, ])
+TNR 
+
+# precision
+PREC <- conf_mat[2, 2]/sum(conf_mat[, 2])
+PREC 
+
+# recall
+REC <- conf_mat[2, 2]/sum(conf_mat[2, ])
+REC 
+
+# F1 score
+F1_knnb <- 2 * (PREC * REC)/(PREC + REC)
+F1_knnb 
+```
+
+```{r, eval=TRUE, message=FALSE}
+# ROC curve
+library(pROC)
+roc_b <- roc(dati_test$HeartDisease, as.numeric(knn_b))
+auc_b <- auc(roc_b)
+plot(roc_b, main = "ROC curve", print.auc = TRUE, auc.polygon = TRUE, 
+     max.auc.polygon = TRUE, grid = TRUE, legacy.axes = TRUE, 
+     xlab = "False positive rate", ylab = "True positive rate")
+
+```
+
+# Comparing models
+
+## Unbalanced dataset
+
+We will now compare the performances of the models on the unbalanced
+dataset. By the plot and the summary table we can notice how the glm
+model performs better than the others in terms of AUC, while the LDA and
+QDA perform better in terms of F1 score.
+
+```{r, eval=TRUE}
+# compare all the models for unbalanced dataset
+
+# ROC curve
+library(dplyr)
+library(pROC)
+library(ggplot2)
+pred.glm.best <- predict(glm10u, dati_test[,-1], type="response")
+pred.lda.best <- lda_u.post[,2]
+pred.qda.best <- qda_u.post[,2]
+pred.knn <- knn_u
+pred.ridge <- ridge_u.predmin
+pred.lasso <- lasso_u.predmin
+
+prediction <- tibble(truth=as.factor(dati_test$HeartDisease))
+prediction <- prediction %>% mutate(pred=as.numeric(pred.glm.best)) %>%
+  mutate(model="best GLM") %>%
+  add_row(truth=as.factor(dati_test$HeartDisease), pred=as.numeric(pred.lda.best),
+          model="LDA") %>%
+  add_row(truth=as.factor(dati_test$HeartDisease), pred=as.numeric(pred.qda.best),
+          model="QDA") %>%
+  add_row(truth=as.factor(dati_test$HeartDisease), pred=as.numeric(pred.knn),
+          model="KNN") %>%
+  add_row(truth=as.factor(dati_test$HeartDisease), pred=as.numeric(pred.ridge),
+          model="Ridge") %>%
+  add_row(truth=as.factor(dati_test$HeartDisease), pred=as.numeric(pred.lasso),
+          model="LASSO")
+
+#roc <- prediction %>% group_by(model) %>%
+  #roc_curve(truth, pred, event_level="second") %>%
+ # autoplot()
+#roc
+```
+
+```{r, results='asis', echo=FALSE, message=FALSE}
+#AUC value
+AUCs <- rbind (auc(dati_test$HeartDisease, pred.glm.best),
+auc(dati_test$HeartDisease, as.numeric(pred.lda.best)),
+auc(dati_test$HeartDisease, as.numeric(pred.ridge)),
+auc(dati_test$HeartDisease, as.numeric(pred.lasso)),
+auc(dati_test$HeartDisease, as.numeric(pred.qda.best)),
+auc(dati_test$HeartDisease, as.numeric(pred.knn)))
+
+#F1 scores
+F1s <- rbind (F1_glmu, F1_ldau, F1_qdau, F1_ridgeu, F1_lassou, F1_knnu)
+
+comp <- as.data.frame(cbind(AUCs, F1s))
+
+
+comp <- as.data.frame(cbind(AUCs, F1s))
+colnames(comp) <- c("AUC values", "F1 scores")
+rownames(comp) <- c("GLM", "LDA", "QDA", "Ridge", "Lasso", "KNN")
+
+# Stampa della tabella utilizzando la funzione kable
+kable(comp, caption = "Metrics - Unbalanced models")
+```
+
+## Balanced dataset
+
+For the balanced dataset we can notice how the glm model performs better
+in terms of AUC value while the ridge has the higher F1 score. Being the
+F1 scores very close to each others, we are more confident to select the
+glm model as the best one by also considering the AUC value.
+
+```{r, eval=TRUE}
+# compare all the models for balanced dataset
+
+# ROC curves
+
+pred.glm.best_b <- predict(glm10, dati_test[,-1], type="response")
+pred.lda.best_b <- lda_b.post[,2]
+pred.qda.best_b <- qda_b.post[,2]
+pred.knn_b <- knn_b
+pred.ridge_b <- ridge_b.predmin
+pred.lasso_b <- lasso_b.predmin
+
+prediction_b <- tibble(truth=as.factor(dati_test$HeartDisease))
+prediction_b <- prediction_b %>% mutate(pred=as.numeric(pred.glm.best_b)) %>%
+  mutate(model="best GLM") %>%
+  add_row(truth=as.factor(dati_test$HeartDisease), pred=as.numeric(pred.lda.best_b),
+          model="LDA") %>%
+  add_row(truth=as.factor(dati_test$HeartDisease), pred=as.numeric(pred.qda.best_b),
+          model="QDA") %>%
+  add_row(truth=as.factor(dati_test$HeartDisease), pred=as.numeric(pred.knn_b),
+          model="KNN") %>%
+  add_row(truth=as.factor(dati_test$HeartDisease), pred=as.numeric(pred.ridge_b),
+          model="Ridge") %>%
+  add_row(truth=as.factor(dati_test$HeartDisease), pred=as.numeric(pred.lasso_b),
+          model="LASSO")
+
+#roc_b <- prediction_b %>% group_by(model) %>%
+ # roc_curve(truth, pred, event_level="second") %>%
+  #autoplot()
+#roc_b
+```
+
+```{r,results='asis', echo=FALSE, message=FALSE}
+# Caricamento del pacchetto knitr
+library(knitr)
+#AUC value
+AUCs <- rbind(auc(dati_test$HeartDisease, pred.glm.best_b),
+auc(dati_test$HeartDisease, as.numeric(pred.lda.best_b)),
+auc(dati_test$HeartDisease, as.numeric(pred.qda.best_b)),
+auc(dati_test$HeartDisease, as.numeric(pred.ridge_b)),
+auc(dati_test$HeartDisease, as.numeric(pred.lasso_b)),
+auc(dati_test$HeartDisease, as.numeric(pred.knn_b)))
+
+#F1 scores
+F1s <- rbind (F1_glmb, F1_ldab, F1_qdab, F1_ridgeb, F1_lassob, F1_knnb)
+
+# Creazione della tabella
+comp <- as.data.frame(cbind(AUCs, F1s))
+colnames(comp) <- c("AUC values", "F1 scores")
+rownames(comp) <- c("GLM","LDA", "QDA","Ridge", "Lasso", "KNN")
+
+# Stampa della tabella utilizzando la funzione kable
+kable(comp, caption = "Metrics - Balanced models")
+```
+
+## Residual analysis
+
+We are now comparing all the residuals as well as MSE and MAE of our
+models. Residuals provide important information about the performance
+and accuracy of a predictive model, as they represent the discrepancies
+between the predicted values and the actual values in the dataset. By
+analyzing the residuals, we can assess the goodness-of-fit of the model
+and evaluate its predictive capabilities. The minimum and maximum
+residuals give us insights into the range of errors made by the model. A
+smaller range indicates that the model is making more consistent
+predictions, while a larger range suggests more variability in the
+predictions. The mean residual provides an overall measure of the
+average prediction error. It represents the average discrepancy between
+the predicted and actual values. A mean residual close to zero indicates
+that, on average, the model's predictions are accurate. However, if the
+mean residual deviates significantly from zero, it suggests a systematic
+bias in the model's predictions. MSE (Mean Squared Error) and MAE (Mean
+Absolute Error) are metrics that quantify the accuracy of a predictive
+model. MSE measures the average squared difference between the predicted
+and actual values, providing a measure of overall prediction error. MAE,
+on the other hand, measures the average absolute difference, giving us a
+sense of the average magnitude of the errors. We take into account this error because it is less sensible to outliers and each observation contributes equally to it. Lower values of MSE and
+MAE indicate better model performance, as they reflect smaller
+prediction errors. By examining the minimum, maximum, and mean
+residuals, along with MSE and MAE, we gain insights into the
+variability, bias, and overall accuracy of the model's predictions.
+These measures help us assess the model's performance and determine its
+suitability for the intended task. When analyzing the unbalanced
+dataset, we observe that only the ridge and lasso models exhibit a mean
+residual close to zero, indicating potentially more accurate predictions
+compared to the other models. Despite this, the error table reveals
+generally low values across all models, with ridge and lasso performing
+particularly well in terms of precise predictions. In the case of the
+balanced dataset, we find that the mean residuals for all models are not
+as close to zero, suggesting accurate predictions only on the GLM.
+However, it is worth noting that the GLM model displays a larger
+interval of residuals, which could imply less precise predictions. By
+examining the MSE and MAE values, we can confirm that the GLM model
+appears to be less accurate, as it exhibits higher error values compared
+to the other models, which still have quite high values.
+
+```{r, eval=TRUE}
+# residuals
+res.glm10u <- residuals(glm10u) #glm unb
+res.glm10 <- residuals(glm10) #glm bal
+res.lda_u <- dati_test$HeartDisease - lda_u.post[,2] #lda unb
+res.lda_b <- dati_test$HeartDisease - lda_b.post[,2] #lda bal
+res.qda_u <- dati_test$HeartDisease - qda_u.post[,2] #qda unb
+res.qda_b <- dati_test$HeartDisease - qda_b.post[,2] #qda bal
+res.ridge_u <- dati_test$HeartDisease - ridge_u.predmin #ridge unb
+res.ridge_b <- dati_test$HeartDisease - ridge_b.predmin #ridge b
+res.lasso_u <- dati_test$HeartDisease - lasso_u.predmin #lasso unb
+res.lasso_b <- dati_test$HeartDisease - lasso_b.predmin #lasso unb
+
+# error results
+mse_unb <- rbind(mse_glm_u <- mean(res.glm10u^2),
+  mse_lda_u <- mean(res.lda_u^2),
+  mse_qda_u <- mean(res.qda_u^2),
+  mse_ridge_u <- mean(res.ridge_u^2),
+  mse_lasso_u <- mean(res.lasso_u^2))
+
+mse_bal <- rbind(
+  mse_glm_b <- mean(res.glm10^2),
+  mse_lda_b <- mean(res.lda_b^2),
+  mse_qda_b <- mean(res.qda_b^2),
+  mse_ridge_b <- mean(res.ridge_b^2),
+  mse_lasso_b <- mean(res.lasso_b^2))
+
+mae_unb <- rbind(mae_glm_u <- mean(abs(res.glm10u)),
+             mae_lda_u <- mean(abs(res.lda_u)),
+             mae_qda_u <- mean(abs(res.qda_u)),
+             mae_ridge_u <- mean(abs(res.ridge_u)),
+             mae_lasso_u <- mean(abs(res.lasso_u)))
+
+mae_bal <- rbind(
+             mae_glm_b <- mean(abs(res.glm10)),
+             mae_lda_b <- mean(abs(res.lda_b)),
+             mae_qda_b <- mean(abs(res.qda_b)),
+             mae_ridge_b <- mean(abs(res.ridge_b)),
+             mae_lasso_b <- mean(abs(res.lasso_b)))
+```
+
+```{r,results='asis', echo=FALSE, message=FALSE}
+# Caricamento del pacchetto knitr
+library(knitr)
+library(kableExtra)
+residual_table_unb <- rbind(
+  c(min(res.glm10u), min(res.glm10u), mean(res.glm10u)),
+  c(min(res.lda_u), max(res.lda_u),mean(res.lda_u)),
+  c(min(res.qda_u), max(res.qda_u),mean(res.qda_u)),
+  c(min(res.ridge_u), max(res.ridge_u),mean(res.ridge_u)),
+  c(min(res.lasso_u), max(res.lasso_u), mean(res.lasso_u)))
+  
+residual_table_bal <- rbind(
+  c(min(res.glm10), max(res.glm10), mean(res.glm10)),
+   c(min(res.lda_b), max(res.lda_b),mean(res.lda_b)),
+  c(min(res.qda_b), max(res.qda_b),mean(res.qda_b)),
+  c(min(res.ridge_b), max(res.ridge_b),mean(res.ridge_b)),
+  c(min(res.lasso_b), max(res.lasso_b),mean(res.lasso_b)))
+  
+residual_table_unb <- as.data.frame(residual_table_unb)
+residual_table_bal <- as.data.frame(residual_table_bal)
+names(residual_table_unb) <- c("Min", "Max", "Mean")
+names(residual_table_bal) <- c("Min", "Max", "Mean")
+rownames(residual_table_unb) <- c("GLM","LDA","QDA","Ridge","Lasso")
+rownames(residual_table_bal) <- c("GLM","LDA","QDA","Ridge","Lasso")
+             
+error_unb <- as.data.frame(cbind(mse_unb, mae_unb))
+error_bal <- as.data.frame(cbind(mse_bal, mae_bal))
+colnames(error_unb) <- c("MSE", "MAE")
+colnames(error_bal) <- c("MSE", "MAE")
+rownames(error_unb) <- c("GLM","LDA","QDA","Ridge","Lasso")
+rownames(error_bal) <- c("GLM","LDA","QDA","Ridge","Lasso")
+
+kable(residual_table_unb, caption = "Residual table - Unbalanced models") 
+
+# Aggiunta del titolo alla tabella residual_table_bal
+kable(residual_table_bal, caption = "Residual table - Balanced models") 
+
+# Aggiunta del titolo alla tabella error_unb
+kable(error_unb, caption = "Errors table - Unbalanced models") 
+
+# Aggiunta del titolo alla tabella error_bal
+kable(error_bal, caption = "Errors table - Balanced models") 
+```
+
+# Conclusions
+
+By taking into account the results of each model for the unbalanced
+dataset, we would choose the LDA model, as it brings the higher F1
+score, a good AUC value, better residuals and error values. As of the
+balanced dataset, we would consider the GLM model, as it has the best F1
+score and the highest AUC value. If we compare the overall results, we
+notice that the balancing brings an improvement only on the GLM model.
+We also notice how on the unbalanced dataset the precision is average
+and the recall is quite low, while in the balanced dataset the precision
+is low and the recall is quite high. The difference in precision and
+recall between the datasets may be due to the distribution of the input
+data and its effect on the model's performance. In the case of the
+unbalanced dataset, where the minority class (has a heart disease) is
+significantly underrepresented compared to the majority class (does not have a heart disease), the model may struggle to correctly detect the positive class.
+Consequently, the precision could be low as the model might make
+erroneous positive predictions, resulting in a high number of false
+positives. Additionally, the recall could be even lower as the model may
+miss many positive cases, leading to a high number of false negatives in
+its predictions. In the case of the balanced dataset, where the data
+distribution between positive and negative classes is more evenly
+distributed, the model can learn the distinctive patterns of the
+positive class more accurately. As a result, the recall could increase
+as the model can identify a higher number of positive cases correctly.
+However, due to the balanced nature of the classes, the precision may
+decrease as the model becomes more cautious in making positive
+predictions to avoid false positives. 
+In summary, the models demonstrate a high AUC value, indicating good overall classification ability. However, they also exhibit a low F1 score, suggesting room for improvement in accurately identifying people with a heart disease and achieving a balanced classification performance.
